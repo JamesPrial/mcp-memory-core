@@ -74,8 +74,22 @@ func (m *MemoryBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 	defer m.mu.RUnlock()
 	
 	stats := map[string]int{
-		"total_entities": len(m.entities),
+		"entities": len(m.entities),
 	}
+	
+	// Count entities by type
+	typeCounts := make(map[string]int)
+	for _, entity := range m.entities {
+		if entity.EntityType != "" {
+			typeCounts[entity.EntityType]++
+		}
+	}
+	
+	// Add type counts to stats
+	for entityType, count := range typeCounts {
+		stats["type_"+entityType] = count
+	}
+	
 	return stats, nil
 }
 
