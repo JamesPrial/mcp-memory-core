@@ -7,15 +7,16 @@ import (
 )
 
 // NewBackend creates a new storage backend based on the configuration
-func NewBackend(config *config.Settings) (Backend, error) {
-	switch config.StorageType {
+func NewBackend(cfg *config.Settings) (Backend, error) {
+	switch cfg.StorageType {
 	case "sqlite":
-		// For now, return a memory backend since SQLite isn't implemented yet
-		// In a real implementation, this would create an SQLite backend
-		return NewMemoryBackend(), nil
-	case "mock", "memory", "":
+		if cfg.StoragePath == "" {
+			return nil, fmt.Errorf("storage path is required for SQLite backend")
+		}
+		return NewSqliteBackend(cfg.StoragePath, cfg.Sqlite.WALMode)
+	case "memory", "":
 		return NewMemoryBackend(), nil
 	default:
-		return nil, fmt.Errorf("unsupported storage type: %s", config.StorageType)
+		return nil, fmt.Errorf("unsupported storage type: %s", cfg.StorageType)
 	}
 }
