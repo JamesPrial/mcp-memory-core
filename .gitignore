@@ -1,1 +1,4 @@
 test-server
+*.sqlite
+coverage*.out
+coverage*.html
