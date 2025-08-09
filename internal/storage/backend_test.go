@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestMockBackend_GetEntity(t *testing.T) {
 
 	mockBackend.On("GetEntity", mock.Anything, "e1").Return(expectedEntity, nil)
 
-	entity, err := mockBackend.GetEntity(mock.Anything, "e1")
+	entity, err := mockBackend.GetEntity(context.Background(), "e1")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedEntity, entity)
 	mockBackend.AssertExpectations(t)

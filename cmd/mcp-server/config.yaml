@@ -1,0 +1,6 @@
+storageType: "memory"
+storagePath: "./test-knowledge.db"
+httpPort: 8080
+logLevel: "info"
+sqlite:
+  walMode: true
