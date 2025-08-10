@@ -141,7 +141,8 @@ func TestServerTestableRun(t *testing.T) {
 				`"id":3`,
 				`"error"`,
 				`"code":-32602`,
-				`"message":"Invalid params: name is required"`,
+				`"message":"Invalid params"`,
+				`"data":"Missing 'name' field in params"`,
 			},
 		},
 		{
@@ -152,7 +153,8 @@ func TestServerTestableRun(t *testing.T) {
 				`"id":4`,
 				`"error"`,
 				`"code":-32602`,
-				`"message":"Invalid params: name must be a string"`,
+				`"message":"Invalid params"`,
+				`"data":"Field 'name' must be a string"`,
 			},
 		},
 	}
@@ -355,7 +357,8 @@ func TestSendResponseWithMarshalError(t *testing.T) {
 
 	select {
 	case output := <-outputChan:
-		assert.Empty(t, output, "Should have no output when marshal fails")
+		// We now output an error response when marshal fails
+		assert.Contains(t, output, "Failed to serialize response")
 	case <-time.After(1 * time.Second):
 		t.Error("Timeout waiting for output")
 	}
@@ -405,8 +408,9 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 			checkFn: func(t *testing.T, resp *JSONRPCResponse) {
 				assert.Equal(t, "2.0", resp.JSONRPC)
 				assert.Equal(t, 2, resp.ID)
-				assert.NotNil(t, resp.Result)
-				assert.Nil(t, resp.Error)
+				assert.Nil(t, resp.Result)
+				assert.NotNil(t, resp.Error)
+				assert.Equal(t, -32602, resp.Error.Code)
 			},
 		},
 		{
@@ -574,8 +578,9 @@ func TestMoreEdgeCases(t *testing.T) {
 			},
 		}
 		resp := server.HandleRequest(ctx, req)
-		assert.NotNil(t, resp.Result)
-		assert.Nil(t, resp.Error)
+		assert.Nil(t, resp.Result)
+		assert.NotNil(t, resp.Error)
+		assert.Equal(t, -32602, resp.Error.Code)
 	})
 
 	t.Run("tools/call without arguments field", func(t *testing.T) {

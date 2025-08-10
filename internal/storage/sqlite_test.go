@@ -105,7 +105,7 @@ func TestSqliteBackend_SearchEntities(t *testing.T) {
 		contains []string // IDs that should be found
 	}{
 		{"basic name search", "Alpha", 2, []string{"search1", "search3"}},
-		{"case insensitive - lowercase query", "uppercase", 1, []string{"search4"}},
+		{"case insensitive - lowercase query", "uppercase", 2, []string{"search4", "obs3"}}, // Matches name and observation
 		{"case insensitive - uppercase query", "LOWERCASE", 1, []string{"search5"}},
 		{"case insensitive - mixed query", "mixedcase", 1, []string{"search6"}},
 		{"observation search", "searchable", 2, []string{"obs1", "obs3"}},
@@ -159,9 +159,9 @@ func TestSqliteBackend_GetStatistics(t *testing.T) {
 	require.NoError(t, err)
 	
 	assert.Equal(t, 4, stats["entities"])
-	assert.Equal(t, 2, stats["type_Person"])
-	assert.Equal(t, 1, stats["type_Organization"])
-	assert.Equal(t, 1, stats["type_Project"])
+	assert.Equal(t, 2, stats["type_"+string(mcp.EntityTypePerson)])
+	assert.Equal(t, 1, stats["type_"+string(mcp.EntityTypeOrganization)])
+	assert.Equal(t, 1, stats["type_"+string(mcp.EntityTypeProject)])
 }
 
 // Test consistency between SQLite and Memory backends

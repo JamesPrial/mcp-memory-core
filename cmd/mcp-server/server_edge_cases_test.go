@@ -58,8 +58,8 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 			assert.Equal(t, req.ID, resp.ID)
 			assert.Nil(t, resp.Result)
 			assert.NotNil(t, resp.Error)
-			assert.Equal(t, -32601, resp.Error.Code)
-			assert.Equal(t, "Method not found", resp.Error.Message)
+			assert.Equal(t, -32600, resp.Error.Code)
+			assert.Equal(t, "Invalid Request", resp.Error.Message)
 		})
 	}
 }
@@ -108,9 +108,19 @@ func TestServer_EdgeCases_HandleRequest_InvalidRequestStructures(t *testing.T) {
 				
 				resp := server.HandleRequest(ctx, req)
 				assert.Equal(t, "2.0", resp.JSONRPC)
-				assert.Equal(t, req.ID, resp.ID) // Should preserve whatever ID was provided
-				assert.NotNil(t, resp.Result)
-				assert.Nil(t, resp.Error)
+				
+				if id == nil {
+					// nil ID should be rejected (notifications not supported)
+					assert.Nil(t, resp.ID)
+					assert.Nil(t, resp.Result)
+					assert.NotNil(t, resp.Error)
+					assert.Equal(t, -32600, resp.Error.Code)
+				} else {
+					// Other ID types should work
+					assert.Equal(t, req.ID, resp.ID)
+					assert.NotNil(t, resp.Result)
+					assert.Nil(t, resp.Error)
+				}
 			})
 		}
 	})
@@ -567,9 +577,10 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 		
 		resp := server.handleToolsCall(ctx, req)
 		assert.NotNil(t, resp.Error)
-		// Error message should contain the original error
-		// In production, you might want to sanitize this
-		assert.Contains(t, resp.Error.Message, "database connection failed")
+		// Error message should be sanitized
+		assert.Equal(t, "Storage operation failed", resp.Error.Message)
+		assert.NotContains(t, resp.Error.Message, "password=secret123")
+		assert.NotContains(t, resp.Error.Message, "database connection failed")
 	})
 }
 
