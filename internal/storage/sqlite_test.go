@@ -29,27 +29,41 @@ func newTestBackend(t *testing.T) (Backend, func()) {
 	return backend, cleanup
 }
 
-func TestSqliteBackend_CreateAndGetEntity(t *testing.T) {
+// Core functionality tests
+func TestSqliteBackend_BasicCRUD(t *testing.T) {
 	backend, cleanup := newTestBackend(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	entities := []mcp.Entity{{
-		ID:         "test-id-1",
-		Name:       "Test Entity",
-		EntityType: "test",
-		Observations: []string{"obs1", "obs2"},
-		CreatedAt:  time.Now().UTC().Truncate(time.Second),
-	}}
+	now := time.Now().UTC().Truncate(time.Second)
 
-	err := backend.CreateEntities(ctx, entities)
+	entity := mcp.Entity{
+		ID:           "test-id-1",
+		Name:         "Test Entity",
+		EntityType:   mcp.EntityTypePerson,
+		Observations: []string{"obs1", "obs2"},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	// Test Create
+	err := backend.CreateEntities(ctx, []mcp.Entity{entity})
 	require.NoError(t, err)
 
+	// Test Get
 	retrieved, err := backend.GetEntity(ctx, "test-id-1")
 	require.NoError(t, err)
 	require.NotNil(t, retrieved)
 
-	assert.Equal(t, entities[0].ID, retrieved.ID)
+	assert.Equal(t, entity.ID, retrieved.ID)
+	assert.Equal(t, entity.Name, retrieved.Name)
+	assert.Equal(t, entity.EntityType, retrieved.EntityType)
+	assert.Equal(t, entity.Observations, retrieved.Observations)
+
+	// Test Get non-existent
+	notFound, err := backend.GetEntity(ctx, "non-existent-id")
+	assert.NoError(t, err)
+	assert.Nil(t, notFound)
 }
 
 func TestSqliteBackend_SearchEntities(t *testing.T) {
@@ -57,564 +71,424 @@ func TestSqliteBackend_SearchEntities(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Test data with various search scenarios
 	entities := []mcp.Entity{
-		{ID: "s1", Name: "Alpha Test"},
-		{ID: "s2", Name: "Beta Test"},
-		{ID: "s3", Name: "Alpha Other"},
+		{ID: "search1", Name: "Alpha Test", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "search2", Name: "Beta Test", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "search3", Name: "Alpha Other", EntityType: mcp.EntityTypeOrganization, CreatedAt: now},
+		{ID: "search4", Name: "UPPERCASE", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "search5", Name: "lowercase", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "search6", Name: "MixedCase", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{
+			ID: "obs1", Name: "Entity One", EntityType: mcp.EntityTypePerson,
+			Observations: []string{"contains searchable text", "another observation"}, CreatedAt: now,
+		},
+		{
+			ID: "obs2", Name: "Entity Two", EntityType: mcp.EntityTypePerson,
+			Observations: []string{"different content", "no match here"}, CreatedAt: now,
+		},
+		{
+			ID: "obs3", Name: "Entity Three", EntityType: mcp.EntityTypePerson,
+			Observations: []string{"SEARCHABLE in uppercase", "case test"}, CreatedAt: now,
+		},
 	}
+
 	err := backend.CreateEntities(ctx, entities)
 	require.NoError(t, err)
 
-	results, err := backend.SearchEntities(ctx, "Alpha")
-	require.NoError(t, err)
-	assert.Len(t, results, 2)
+	tests := []struct {
+		name     string
+		query    string
+		expected int
+		contains []string // IDs that should be found
+	}{
+		{"basic name search", "Alpha", 2, []string{"search1", "search3"}},
+		{"case insensitive - lowercase query", "uppercase", 2, []string{"search4", "obs3"}}, // Matches name and observation
+		{"case insensitive - uppercase query", "LOWERCASE", 1, []string{"search5"}},
+		{"case insensitive - mixed query", "mixedcase", 1, []string{"search6"}},
+		{"observation search", "searchable", 2, []string{"obs1", "obs3"}},
+		{"empty query returns all", "", 9, nil}, // Should return all entities
+		{"no results", "nonexistent", 0, []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := backend.SearchEntities(ctx, tt.query)
+			require.NoError(t, err)
+			assert.Len(t, results, tt.expected)
+
+			if len(tt.contains) > 0 {
+				foundIDs := make([]string, len(results))
+				for i, result := range results {
+					foundIDs[i] = result.ID
+				}
+				for _, expectedID := range tt.contains {
+					assert.Contains(t, foundIDs, expectedID)
+				}
+			}
+		})
+	}
 }
 
+func TestSqliteBackend_GetStatistics(t *testing.T) {
+	backend, cleanup := newTestBackend(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Test empty backend
+	stats, err := backend.GetStatistics(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats["entities"])
+
+	// Add entities of different types
+	entities := []mcp.Entity{
+		{ID: "stat1", Name: "Person 1", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "stat2", Name: "Person 2", EntityType: mcp.EntityTypePerson, CreatedAt: now},
+		{ID: "stat3", Name: "Org 1", EntityType: mcp.EntityTypeOrganization, CreatedAt: now},
+		{ID: "stat4", Name: "Project 1", EntityType: mcp.EntityTypeProject, CreatedAt: now},
+	}
+
+	err = backend.CreateEntities(ctx, entities)
+	require.NoError(t, err)
+
+	stats, err = backend.GetStatistics(ctx)
+	require.NoError(t, err)
+	
+	assert.Equal(t, 4, stats["entities"])
+	assert.Equal(t, 2, stats["type_"+string(mcp.EntityTypePerson)])
+	assert.Equal(t, 1, stats["type_"+string(mcp.EntityTypeOrganization)])
+	assert.Equal(t, 1, stats["type_"+string(mcp.EntityTypeProject)])
+}
+
+// Test consistency between SQLite and Memory backends
+func TestSqliteBackend_ConsistencyWithMemory(t *testing.T) {
+	testCases := []struct {
+		name     string
+		entities []mcp.Entity
+		query    string
+		expected int
+	}{
+		{
+			name: "case insensitive search",
+			entities: []mcp.Entity{
+				{ID: "1", Name: "Alpha", EntityType: mcp.EntityTypePerson, Observations: []string{"beta"}, CreatedAt: time.Now().UTC()},
+				{ID: "2", Name: "Beta", EntityType: mcp.EntityTypePerson, Observations: []string{"gamma"}, CreatedAt: time.Now().UTC()},
+				{ID: "3", Name: "Gamma", EntityType: mcp.EntityTypePerson, Observations: []string{"alpha"}, CreatedAt: time.Now().UTC()},
+			},
+			query:    "alpha",
+			expected: 2, // Should find "Alpha" in name and entity with "alpha" in observations
+		},
+		{
+			name: "empty query returns all",
+			entities: []mcp.Entity{
+				{ID: "1", Name: "Test1", EntityType: mcp.EntityTypePerson, CreatedAt: time.Now().UTC()},
+				{ID: "2", Name: "Test2", EntityType: mcp.EntityTypePerson, CreatedAt: time.Now().UTC()},
+			},
+			query:    "",
+			expected: 2,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test SQLite backend
+			sqliteBackend, cleanup := newTestBackend(t)
+			defer cleanup()
+			
+			ctx := context.Background()
+			err := sqliteBackend.CreateEntities(ctx, tc.entities)
+			require.NoError(t, err)
+			
+			sqliteResults, err := sqliteBackend.SearchEntities(ctx, tc.query)
+			require.NoError(t, err)
+			
+			// Test Memory backend
+			memoryBackend := NewMemoryBackend()
+			err = memoryBackend.CreateEntities(ctx, tc.entities)
+			require.NoError(t, err)
+			
+			memoryResults, err := memoryBackend.SearchEntities(ctx, tc.query)
+			require.NoError(t, err)
+			
+			// Both backends should return the same number of results
+			assert.Equal(t, len(memoryResults), len(sqliteResults), 
+				"SQLite and Memory backends should return same number of results for query: %s", tc.query)
+			assert.Equal(t, tc.expected, len(sqliteResults))
+		})
+	}
+}
+
+// Concurrent access tests
 func TestSqliteBackend_ConcurrentAccess(t *testing.T) {
 	backend, cleanup := newTestBackend(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	done := make(chan bool)
-
-	go func() {
-		for i := 0; i < 100; i++ {
-			entity := mcp.Entity{ID: fmt.Sprintf("c%d", i)}
-			backend.CreateEntities(ctx, []mcp.Entity{entity})
-		}
-		done <- true
-	}()
-
-	go func() {
-		for i := 0; i < 100; i++ {
-			backend.SearchEntities(ctx, "c")
-		}
-		done <- true
-	}()
-
-	<-done
-	<-done
-}
-
-// Error case tests for NewSqliteBackend
-func TestSqliteBackend_NewSqliteBackend_InvalidPath(t *testing.T) {
-	// Test with invalid path (no permission)
-	_, err := NewSqliteBackend("/root/no_permission.db", true)
-	assert.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "failed to open database") || 
-		strings.Contains(err.Error(), "failed to ping database"))
-}
-
-func TestSqliteBackend_NewSqliteBackend_DirectoryAsPath(t *testing.T) {
-	// Test with directory path instead of file
-	tempDir := t.TempDir()
-	_, err := NewSqliteBackend(tempDir, true)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to ping database")
-}
-
-func TestSqliteBackend_NewSqliteBackend_InvalidConnectionString(t *testing.T) {
-	// Test with malformed path that causes connection issues
-	_, err := NewSqliteBackend("", true)
-	// Empty path actually creates an in-memory database, so let's test with an invalid character
-	if err == nil {
-		// Try a path with invalid characters that should cause issues
-		_, err = NewSqliteBackend("\x00invalid", true)
-	}
-	if err != nil {
-		assert.Error(t, err)
-	}
-}
-
-// Error case tests for CreateEntities
-func TestSqliteBackend_CreateEntities_EmptySlice(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	err := backend.CreateEntities(ctx, []mcp.Entity{})
-	assert.NoError(t, err) // Should not error on empty slice
-}
-
-func TestSqliteBackend_CreateEntities_InvalidJSON(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	
-	// Create entity with observations that cannot be marshaled
-	// Use a channel which cannot be marshaled to JSON
-	type unmarshalableEntity struct {
-		mcp.Entity
-		BadField chan int `json:"observations"`
-	}
-	
-	// We can't directly test JSON marshal errors with the current Entity struct
-	// But we can test database constraint violations
-	entities := []mcp.Entity{{
-		ID:         strings.Repeat("x", 10000), // Very long ID that might cause issues
-		Name:       "",
-		EntityType: "",
-		Observations: []string{"test"},
-		CreatedAt:  time.Now().UTC(),
-	}}
-
-	err := backend.CreateEntities(ctx, entities)
-	// This should succeed as SQLite is quite permissive, but tests the path
-	if err != nil {
-		assert.Contains(t, err.Error(), "failed to insert entity")
-	}
-}
-
-func TestSqliteBackend_CreateEntities_ContextCanceled(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	entities := []mcp.Entity{{
-		ID:         "test-id",
-		Name:       "Test",
-		EntityType: "test",
-		CreatedAt:  time.Now().UTC(),
-	}}
-
-	err := backend.CreateEntities(ctx, entities)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "context canceled")
-}
-
-func TestSqliteBackend_CreateEntities_DatabaseClosed(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	cleanup() // Close the database first
-
-	ctx := context.Background()
-	entities := []mcp.Entity{{
-		ID:         "test-id",
-		Name:       "Test",
-		EntityType: "test",
-		CreatedAt:  time.Now().UTC(),
-	}}
-
-	err := backend.CreateEntities(ctx, entities)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to begin transaction")
-}
-
-// Error case tests for GetEntity
-func TestSqliteBackend_GetEntity_NotFound(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	entity, err := backend.GetEntity(ctx, "non-existent-id")
-	assert.NoError(t, err)
-	assert.Nil(t, entity)
-}
-
-func TestSqliteBackend_GetEntity_ContextCanceled(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := backend.GetEntity(ctx, "test-id")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "context canceled")
-}
-
-func TestSqliteBackend_GetEntity_DatabaseClosed(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	cleanup() // Close database first
-
-	ctx := context.Background()
-	_, err := backend.GetEntity(ctx, "test-id")
-	assert.Error(t, err)
-}
-
-func TestSqliteBackend_GetEntity_CorruptedJSON(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	// We need to manually insert corrupted JSON to test unmarshal errors
-	sqliteBackend := backend.(*SqliteBackend)
-	
-	ctx := context.Background()
-	_, err := sqliteBackend.db.ExecContext(ctx, `
-		INSERT INTO entities (id, name, entity_type, observations, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, "corrupted-json-id", "Test", "test", "invalid-json-{", time.Now().UTC())
-	require.NoError(t, err)
-
-	// Now try to get the entity with corrupted JSON
-	_, err = backend.GetEntity(ctx, "corrupted-json-id")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal observations")
-}
-
-// Error case tests for SearchEntities
-func TestSqliteBackend_SearchEntities_ContextCanceled(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := backend.SearchEntities(ctx, "test")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "context canceled")
-}
-
-func TestSqliteBackend_SearchEntities_DatabaseClosed(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	cleanup() // Close database first
-
-	ctx := context.Background()
-	_, err := backend.SearchEntities(ctx, "test")
-	assert.Error(t, err)
-}
-
-func TestSqliteBackend_SearchEntities_CorruptedJSON(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	// Insert entity with corrupted JSON
-	sqliteBackend := backend.(*SqliteBackend)
-	ctx := context.Background()
-	
-	_, err := sqliteBackend.db.ExecContext(ctx, `
-		INSERT INTO entities (id, name, entity_type, observations, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, "corrupted-search-id", "SearchTest", "test", "invalid-json-[", time.Now().UTC())
-	require.NoError(t, err)
-
-	// Search should fail when trying to unmarshal corrupted JSON
-	_, err = backend.SearchEntities(ctx, "SearchTest")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal observations")
-}
-
-func TestSqliteBackend_SearchEntities_EmptyQuery(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	results, err := backend.SearchEntities(ctx, "")
-	assert.NoError(t, err)
-	assert.Len(t, results, 0) // Should return empty results
-}
-
-// Error case tests for GetStatistics
-func TestSqliteBackend_GetStatistics_ContextCanceled(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := backend.GetStatistics(ctx)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "context canceled")
-}
-
-func TestSqliteBackend_GetStatistics_DatabaseClosed(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	cleanup() // Close database first
-
-	ctx := context.Background()
-	_, err := backend.GetStatistics(ctx)
-	assert.Error(t, err)
-}
-
-// Error case tests for Close
-func TestSqliteBackend_Close_MultipleClose(t *testing.T) {
-	backend, _ := newTestBackend(t)
-	
-	// First close should succeed
-	err1 := backend.Close()
-	assert.NoError(t, err1)
-	
-	// Second close might return an error depending on implementation
-	err2 := backend.Close()
-	// SQLite typically handles multiple closes gracefully, but we test the path
-	if err2 != nil {
-		assert.Error(t, err2)
-	}
-}
-
-func TestSqliteBackend_Close_NilDatabase(t *testing.T) {
-	backend := &SqliteBackend{db: nil}
-	err := backend.Close()
-	assert.NoError(t, err) // Should handle nil gracefully
-}
-
-// Concurrent access error scenarios
-func TestSqliteBackend_ConcurrentAccess_WithErrors(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
 	var wg sync.WaitGroup
-	errorCount := 0
-	var errorMutex sync.Mutex
+	const numWorkers = 10
+	const opsPerWorker = 10
 
-	// Multiple goroutines trying to create entities with potential conflicts
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(id int) {
+	// Concurrent writes
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go func(workerID int) {
 			defer wg.Done()
-			
-			entity := mcp.Entity{
-				ID:         fmt.Sprintf("concurrent-%d", id),
-				Name:       fmt.Sprintf("Concurrent Test %d", id),
-				EntityType: "test",
-				CreatedAt:  time.Now().UTC(),
-			}
-			
-			err := backend.CreateEntities(ctx, []mcp.Entity{entity})
-			if err != nil {
-				errorMutex.Lock()
-				errorCount++
-				errorMutex.Unlock()
+			for j := 0; j < opsPerWorker; j++ {
+				entity := mcp.Entity{
+					ID:         fmt.Sprintf("worker-%d-entity-%d", workerID, j),
+					Name:       fmt.Sprintf("Worker %d Entity %d", workerID, j),
+					EntityType: mcp.EntityTypePerson,
+					CreatedAt:  time.Now().UTC(),
+				}
+				backend.CreateEntities(ctx, []mcp.Entity{entity})
 			}
 		}(i)
 	}
 
-	// Multiple goroutines trying to search concurrently
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
+	// Concurrent reads
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := backend.SearchEntities(ctx, "concurrent")
-			if err != nil {
-				errorMutex.Lock()
-				errorCount++
-				errorMutex.Unlock()
+			for j := 0; j < opsPerWorker; j++ {
+				backend.SearchEntities(ctx, "Worker")
 			}
 		}()
 	}
 
 	wg.Wait()
-	
-	// Most operations should succeed, but we've tested concurrent paths
-	assert.LessOrEqual(t, errorCount, 5) // Allow some errors due to concurrency
+
+	// Verify final state
+	stats, err := backend.GetStatistics(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, numWorkers*opsPerWorker, stats["entities"])
 }
 
-// Test schema initialization failure
-func TestSqliteBackend_SchemaInitializationFailure(t *testing.T) {
-	// Create a read-only file to simulate schema init failure
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "readonly.db")
-	
-	// Create the file
-	file, err := os.Create(dbPath)
-	require.NoError(t, err)
-	file.Close()
-	
-	// Make it read-only
-	err = os.Chmod(dbPath, 0444)
-	require.NoError(t, err)
-	
-	// This should fail during schema initialization or ping
-	_, err = NewSqliteBackend(dbPath, true)
-	if err != nil {
-		// Expected on systems where file permissions are enforced
-		assert.True(t, strings.Contains(err.Error(), "failed to initialize schema") || 
+// Error handling tests
+func TestSqliteBackend_ErrorHandling(t *testing.T) {
+	t.Run("invalid database path", func(t *testing.T) {
+		_, err := NewSqliteBackend("/root/no_permission.db", true)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "failed to open database") || 
 			strings.Contains(err.Error(), "failed to ping database"))
-	}
-	
-	// Cleanup: restore permissions so temp dir can be removed
-	os.Chmod(dbPath, 0644)
+	})
+
+	t.Run("directory as database path", func(t *testing.T) {
+		tempDir := t.TempDir()
+		_, err := NewSqliteBackend(tempDir, true)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to ping database")
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		backend, cleanup := newTestBackend(t)
+		defer cleanup()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		entities := []mcp.Entity{{
+			ID:         "test-id",
+			Name:       "Test",
+			EntityType: mcp.EntityTypePerson,
+			CreatedAt:  time.Now().UTC(),
+		}}
+
+		err := backend.CreateEntities(ctx, entities)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+
+		_, err = backend.GetEntity(ctx, "test-id")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+
+		_, err = backend.SearchEntities(ctx, "test")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+
+		_, err = backend.GetStatistics(ctx)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+	})
+
+	t.Run("database closed operations", func(t *testing.T) {
+		backend, cleanup := newTestBackend(t)
+		cleanup() // Close the database first
+
+		ctx := context.Background()
+		entities := []mcp.Entity{{
+			ID:         "test-id",
+			Name:       "Test",
+			EntityType: mcp.EntityTypePerson,
+			CreatedAt:  time.Now().UTC(),
+		}}
+
+		err := backend.CreateEntities(ctx, entities)
+		assert.Error(t, err)
+
+		_, err = backend.GetEntity(ctx, "test-id")
+		assert.Error(t, err)
+
+		_, err = backend.SearchEntities(ctx, "test")
+		assert.Error(t, err)
+
+		_, err = backend.GetStatistics(ctx)
+		assert.Error(t, err)
+	})
+
+	t.Run("corrupted JSON in database", func(t *testing.T) {
+		backend, cleanup := newTestBackend(t)
+		defer cleanup()
+
+		// Manually insert corrupted JSON to test unmarshal errors
+		sqliteBackend := backend.(*SqliteBackend)
+		ctx := context.Background()
+		
+		_, err := sqliteBackend.db.ExecContext(ctx, `
+			INSERT INTO entities (id, name, entity_type, observations, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, "corrupted-id", "Test", "test", "invalid-json-{", time.Now().UTC())
+		require.NoError(t, err)
+
+		// Operations should fail with unmarshal errors
+		_, err = backend.GetEntity(ctx, "corrupted-id")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to unmarshal observations")
+
+		_, err = backend.SearchEntities(ctx, "Test")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to unmarshal observations")
+	})
+
+	t.Run("empty slice operations", func(t *testing.T) {
+		backend, cleanup := newTestBackend(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		
+		// Empty slice should not error
+		err := backend.CreateEntities(ctx, []mcp.Entity{})
+		assert.NoError(t, err)
+
+		// Entity with empty observations should work
+		entities := []mcp.Entity{{
+			ID:           "empty-obs",
+			Name:         "Empty Observations",
+			EntityType:   mcp.EntityTypePerson,
+			Observations: []string{},
+			CreatedAt:    time.Now().UTC(),
+		}}
+		
+		err = backend.CreateEntities(ctx, entities)
+		require.NoError(t, err)
+
+		entity, err := backend.GetEntity(ctx, "empty-obs")
+		assert.NoError(t, err)
+		assert.NotNil(t, entity)
+		assert.Empty(t, entity.Observations)
+	})
+
+	t.Run("multiple close operations", func(t *testing.T) {
+		backend, _ := newTestBackend(t)
+		
+		err1 := backend.Close()
+		assert.NoError(t, err1)
+		
+		// Second close should be handled gracefully
+		err2 := backend.Close()
+		if err2 != nil {
+			assert.Error(t, err2)
+		}
+	})
 }
 
-// Test database lock scenarios
-func TestSqliteBackend_DatabaseLock(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "locked.db")
-	
-	// Create first connection
-	backend1, err := NewSqliteBackend(dbPath, false) // WAL mode disabled to test locks
-	require.NoError(t, err)
-	defer backend1.Close()
-	
-	// Start a long-running transaction
-	sqliteBackend1 := backend1.(*SqliteBackend)
-	tx, err := sqliteBackend1.db.Begin()
-	require.NoError(t, err)
-	
-	// Insert some data in the transaction but don't commit
-	_, err = tx.Exec("INSERT INTO entities (id, name, entity_type, observations, created_at) VALUES (?, ?, ?, ?, ?)",
-		"lock-test", "Lock Test", "test", "[]", time.Now().UTC())
-	require.NoError(t, err)
-	
-	// Create second connection
-	backend2, err := NewSqliteBackend(dbPath, false)
-	if err != nil {
-		// May fail due to lock, which is what we're testing
-		assert.Contains(t, err.Error(), "database")
-		tx.Rollback()
-		return
-	}
-	defer backend2.Close()
-	
-	// Try to write from second connection with short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	
-	entity := mcp.Entity{
-		ID:         "lock-test-2",
-		Name:       "Lock Test 2",
-		EntityType: "test",
-		CreatedAt:  time.Now().UTC(),
-	}
-	
-	err = backend2.CreateEntities(ctx, []mcp.Entity{entity})
-	if err != nil {
-		// Expected due to lock or timeout
-		assert.True(t, 
-			strings.Contains(err.Error(), "database is locked") ||
-			strings.Contains(err.Error(), "context deadline exceeded") ||
-			strings.Contains(err.Error(), "failed to begin transaction"),
-		)
-	}
-	
-	// Cleanup transaction
-	tx.Rollback()
-}
+// Schema and database integrity tests
+func TestSqliteBackend_DatabaseIntegrity(t *testing.T) {
+	t.Run("read-only database file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		dbPath := filepath.Join(tempDir, "readonly.db")
+		
+		// Create and make read-only
+		file, err := os.Create(dbPath)
+		require.NoError(t, err)
+		file.Close()
+		
+		err = os.Chmod(dbPath, 0444)
+		require.NoError(t, err)
+		
+		// Should fail during initialization
+		_, err = NewSqliteBackend(dbPath, true)
+		if err != nil {
+			assert.True(t, strings.Contains(err.Error(), "failed to initialize schema") || 
+				strings.Contains(err.Error(), "failed to ping database"))
+		}
+		
+		// Restore permissions for cleanup
+		os.Chmod(dbPath, 0644)
+	})
 
-// Test with malformed database file
-func TestSqliteBackend_CorruptedDatabase(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "corrupted.db")
-	
-	// Create a file with invalid SQLite content
-	err := os.WriteFile(dbPath, []byte("this is not a valid sqlite database"), 0644)
-	require.NoError(t, err)
-	
-	// This should fail when trying to ping the database
-	_, err = NewSqliteBackend(dbPath, true)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to ping database")
-}
+	t.Run("corrupted database file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		dbPath := filepath.Join(tempDir, "corrupted.db")
+		
+		// Create invalid SQLite file
+		err := os.WriteFile(dbPath, []byte("this is not a valid sqlite database"), 0644)
+		require.NoError(t, err)
+		
+		_, err = NewSqliteBackend(dbPath, true)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to ping database")
+	})
 
-// Test with unmarshalable observations data type to trigger JSON marshal error
-func TestSqliteBackend_CreateEntities_JSONMarshalError(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	
-	// Create a custom entity struct that will cause JSON marshal to fail
-	// We can't use the actual Entity struct, so we'll test by creating an entity with invalid JSON manually
-	// and then trying to get it. Let's just verify the path through valid creation for now
-	// and then test JSON unmarshal error in a separate test
-	
-	entities := []mcp.Entity{{
-		ID:           "test-marshal",
-		Name:         "Test",
-		EntityType:   "test",
-		Observations: []string{"valid", "observations"},
-		CreatedAt:    time.Now().UTC(),
-	}}
-
-	err := backend.CreateEntities(ctx, entities)
-	assert.NoError(t, err) // This should succeed
-}
-
-// Test statement preparation failure by closing database during transaction
-func TestSqliteBackend_CreateEntities_PrepareStatementError(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-	
-	// Close the database connection to trigger prepare statement error
-	sqliteBackend := backend.(*SqliteBackend)
-	sqliteBackend.db.Close()
-
-	ctx := context.Background()
-	entities := []mcp.Entity{{
-		ID:         "test-prepare",
-		Name:       "Test",
-		EntityType: "test",
-		CreatedAt:  time.Now().UTC(),
-	}}
-
-	err := backend.CreateEntities(ctx, entities)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to begin transaction")
-}
-
-// Test rows iteration error by closing database during search
-func TestSqliteBackend_SearchEntities_RowsIterationError(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	// First create some test data
-	ctx := context.Background()
-	entities := []mcp.Entity{{
-		ID:         "test-rows",
-		Name:       "Test Rows",
-		EntityType: "test",
-		CreatedAt:  time.Now().UTC(),
-	}}
-	err := backend.CreateEntities(ctx, entities)
-	require.NoError(t, err)
-
-	// Now search which should succeed
-	results, err := backend.SearchEntities(ctx, "Test")
-	assert.NoError(t, err)
-	assert.Len(t, results, 1)
-}
-
-// Test GetStatistics with query error by closing database
-func TestSqliteBackend_GetStatistics_QueryError(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	
-	// Close database to trigger query error
-	sqliteBackend := backend.(*SqliteBackend)
-	sqliteBackend.db.Close()
-	cleanup() // Ensure cleanup doesn't try to close again
-
-	ctx := context.Background()
-	_, err := backend.GetStatistics(ctx)
-	assert.Error(t, err)
-}
-
-// Additional test for entity with empty observations JSON
-func TestSqliteBackend_GetEntity_EmptyObservations(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	// Insert entity with empty observations
-	ctx := context.Background()
-	entities := []mcp.Entity{{
-		ID:           "empty-obs",
-		Name:         "Empty Observations",
-		EntityType:   "test",
-		Observations: []string{}, // Empty slice
-		CreatedAt:    time.Now().UTC(),
-	}}
-	
-	err := backend.CreateEntities(ctx, entities)
-	require.NoError(t, err)
-
-	// Retrieve and verify
-	entity, err := backend.GetEntity(ctx, "empty-obs")
-	assert.NoError(t, err)
-	assert.NotNil(t, entity)
-	assert.Equal(t, "empty-obs", entity.ID)
-	assert.Empty(t, entity.Observations)
-}
-
-// Test SQL Open error with invalid driver
-func TestSqliteBackend_NewSqliteBackend_OpenError(t *testing.T) {
-	// This is hard to test with real SQLite driver, but we can test with a path that causes file system issues
-	invalidPath := string([]byte{0, 1, 2}) // Invalid path characters
-	_, err := NewSqliteBackend(invalidPath, true)
-	// This may or may not error depending on the system, but it tests the error path
-	if err != nil {
-		assert.True(t, strings.Contains(err.Error(), "failed to ping database") || 
-			strings.Contains(err.Error(), "failed to open database"))
-	}
+	t.Run("database locking scenarios", func(t *testing.T) {
+		tempDir := t.TempDir()
+		dbPath := filepath.Join(tempDir, "locked.db")
+		
+		// Create first connection with WAL mode disabled
+		backend1, err := NewSqliteBackend(dbPath, false)
+		require.NoError(t, err)
+		defer backend1.Close()
+		
+		// Start long-running transaction
+		sqliteBackend1 := backend1.(*SqliteBackend)
+		tx, err := sqliteBackend1.db.Begin()
+		require.NoError(t, err)
+		defer tx.Rollback()
+		
+		// Insert data but don't commit
+		_, err = tx.Exec("INSERT INTO entities (id, name, entity_type, observations, created_at) VALUES (?, ?, ?, ?, ?)",
+			"lock-test", "Lock Test", "test", "[]", time.Now().UTC())
+		require.NoError(t, err)
+		
+		// Second connection
+		backend2, err := NewSqliteBackend(dbPath, false)
+		if err != nil {
+			assert.Contains(t, err.Error(), "database")
+			return
+		}
+		defer backend2.Close()
+		
+		// Try to write with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		
+		entity := mcp.Entity{
+			ID:         "lock-test-2",
+			Name:       "Lock Test 2",
+			EntityType: mcp.EntityTypePerson,
+			CreatedAt:  time.Now().UTC(),
+		}
+		
+		err = backend2.CreateEntities(ctx, []mcp.Entity{entity})
+		if err != nil {
+			assert.True(t, 
+				strings.Contains(err.Error(), "database is locked") ||
+				strings.Contains(err.Error(), "context deadline exceeded") ||
+				strings.Contains(err.Error(), "failed to begin transaction"))
+		}
+	})
 }

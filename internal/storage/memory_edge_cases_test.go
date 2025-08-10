@@ -32,7 +32,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		entity := mcp.Entity{
 			ID:           "large_name",
 			Name:         largeString,
-			EntityType:   "test",
+			EntityType:   mcp.EntityType("test"),
 			Observations: []string{"obs1"},
 			CreatedAt:    time.Now(),
 		}
@@ -50,7 +50,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		unicodeEntity := mcp.Entity{
 			ID:           "unicode_test_🦄",
 			Name:         "测试名称_Тест_🦄_♻️_™",
-			EntityType:   "unicode_type_🚀",
+			EntityType:   mcp.EntityType("unicode_type_🚀"),
 			Observations: []string{"观察_наблюдение_🔍", "emoji_test_🎉🎊"},
 			CreatedAt:    time.Now(),
 		}
@@ -62,7 +62,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		retrieved, err := backend.GetEntity(ctx, "unicode_test_🦄")
 		require.NoError(t, err)
 		assert.Equal(t, "测试名称_Тест_🦄_♻️_™", retrieved.Name)
-		assert.Equal(t, "unicode_type_🚀", retrieved.EntityType)
+		assert.Equal(t, mcp.EntityType("unicode_type_🚀"), retrieved.EntityType)
 		assert.Contains(t, retrieved.Observations, "观察_наблюдение_🔍")
 	})
 
@@ -76,7 +76,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		entity := mcp.Entity{
 			ID:           "massive_obs",
 			Name:         "Entity with massive observations",
-			EntityType:   "stress_test",
+			EntityType:   mcp.EntityType("stress_test"),
 			Observations: observations,
 			CreatedAt:    time.Now(),
 		}
@@ -95,7 +95,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		entity := mcp.Entity{
 			ID:           "",
 			Name:         "",
-			EntityType:   "",
+			EntityType:   mcp.EntityType(""),
 			Observations: []string{"", "   ", "\t\n"},
 			CreatedAt:    time.Time{},
 		}
@@ -107,7 +107,7 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		retrieved, err := backend.GetEntity(ctx, "")
 		require.NoError(t, err)
 		assert.Equal(t, "", retrieved.Name)
-		assert.Equal(t, "", retrieved.EntityType)
+		assert.Equal(t, mcp.EntityType(""), retrieved.EntityType)
 		assert.Len(t, retrieved.Observations, 3)
 	})
 }
@@ -181,10 +181,10 @@ func TestMemoryBackend_EdgeCases_SearchEntities(t *testing.T) {
 
 	// Setup test data
 	entities := []mcp.Entity{
-		{ID: "1", Name: "John Doe", EntityType: "person", Observations: []string{"Works at ACME", "Likes coffee"}},
-		{ID: "2", Name: "Jane Smith", EntityType: "person", Observations: []string{"CEO of TechCorp", "Plays tennis"}},
-		{ID: "3", Name: "测试用户", EntityType: "person", Observations: []string{"中文观察", "English observation"}},
-		{ID: "4", Name: "🦄 Unicorn Entity", EntityType: "mythical", Observations: []string{"🌈 Rainbow maker", "🦄 Magic user"}},
+		{ID: "1", Name: "John Doe", EntityType: mcp.EntityType("person"), Observations: []string{"Works at ACME", "Likes coffee"}},
+		{ID: "2", Name: "Jane Smith", EntityType: mcp.EntityType("person"), Observations: []string{"CEO of TechCorp", "Plays tennis"}},
+		{ID: "3", Name: "测试用户", EntityType: mcp.EntityType("person"), Observations: []string{"中文观察", "English observation"}},
+		{ID: "4", Name: "🦄 Unicorn Entity", EntityType: mcp.EntityType("mythical"), Observations: []string{"🌈 Rainbow maker", "🦄 Magic user"}},
 	}
 	err := backend.CreateEntities(ctx, entities)
 	require.NoError(t, err)
@@ -284,8 +284,8 @@ func TestMemoryBackend_EdgeCases_GetStatistics(t *testing.T) {
 
 	t.Run("EntitiesWithoutType", func(t *testing.T) {
 		entities := []mcp.Entity{
-			{ID: "1", Name: "No Type 1", EntityType: ""},
-			{ID: "2", Name: "No Type 2", EntityType: ""},
+			{ID: "1", Name: "No Type 1", EntityType: mcp.EntityType("")},
+			{ID: "2", Name: "No Type 2", EntityType: mcp.EntityType("")},
 		}
 		err := backend.CreateEntities(ctx, entities)
 		require.NoError(t, err)
@@ -299,11 +299,11 @@ func TestMemoryBackend_EdgeCases_GetStatistics(t *testing.T) {
 	t.Run("MixedEntityTypes", func(t *testing.T) {
 		backend := NewMemoryBackend() // Fresh backend
 		entities := []mcp.Entity{
-			{ID: "1", Name: "Person 1", EntityType: "person"},
-			{ID: "2", Name: "Person 2", EntityType: "person"},
-			{ID: "3", Name: "Company 1", EntityType: "company"},
-			{ID: "4", Name: "No Type", EntityType: ""},
-			{ID: "5", Name: "Unicode Type", EntityType: "类型_🚀"},
+			{ID: "1", Name: "Person 1", EntityType: mcp.EntityType("person")},
+			{ID: "2", Name: "Person 2", EntityType: mcp.EntityType("person")},
+			{ID: "3", Name: "Company 1", EntityType: mcp.EntityType("company")},
+			{ID: "4", Name: "No Type", EntityType: mcp.EntityType("")},
+			{ID: "5", Name: "Unicode Type", EntityType: mcp.EntityType("类型_🚀")},
 		}
 		err := backend.CreateEntities(ctx, entities)
 		require.NoError(t, err)
@@ -324,7 +324,7 @@ func TestMemoryBackend_EdgeCases_GetStatistics(t *testing.T) {
 			entities[i] = mcp.Entity{
 				ID:         fmt.Sprintf("entity_%d", i),
 				Name:       fmt.Sprintf("Entity %d", i),
-				EntityType: fmt.Sprintf("type_%d", i%100), // 100 different types
+				EntityType: mcp.EntityType(fmt.Sprintf("type_%d", i%100)), // 100 different types
 			}
 		}
 		
@@ -367,7 +367,7 @@ func TestMemoryBackend_EdgeCases_ConcurrentAccess(t *testing.T) {
 					entities[j] = mcp.Entity{
 						ID:         fmt.Sprintf("g%d_e%d", goroutineID, j),
 						Name:       fmt.Sprintf("Goroutine %d Entity %d", goroutineID, j),
-						EntityType: "concurrent",
+						EntityType: mcp.EntityType("concurrent"),
 					}
 				}
 				err := backend.CreateEntities(ctx, entities)
@@ -452,9 +452,9 @@ func TestMemoryBackend_EdgeCases_ConcurrentAccess(t *testing.T) {
 	t.Run("ConcurrentSearchOperations", func(t *testing.T) {
 		// Setup diverse test data
 		setupEntities := []mcp.Entity{
-			{ID: "search_1", Name: "Apple Product", EntityType: "product", Observations: []string{"iPhone", "Technology"}},
-			{ID: "search_2", Name: "Orange Fruit", EntityType: "food", Observations: []string{"Citrus", "Vitamin C"}},
-			{ID: "search_3", Name: "Banana Split", EntityType: "dessert", Observations: []string{"Ice cream", "Sweet"}},
+			{ID: "search_1", Name: "Apple Product", EntityType: mcp.EntityType("product"), Observations: []string{"iPhone", "Technology"}},
+			{ID: "search_2", Name: "Orange Fruit", EntityType: mcp.EntityType("food"), Observations: []string{"Citrus", "Vitamin C"}},
+			{ID: "search_3", Name: "Banana Split", EntityType: mcp.EntityType("dessert"), Observations: []string{"Ice cream", "Sweet"}},
 		}
 		err := backend.CreateEntities(ctx, setupEntities)
 		require.NoError(t, err)
@@ -524,7 +524,7 @@ func TestMemoryBackend_EdgeCases_MemoryPressure(t *testing.T) {
 			largeEntities[i] = mcp.Entity{
 				ID:           fmt.Sprintf("large_entity_%d", i),
 				Name:         strings.Repeat(fmt.Sprintf("large_name_%d_", i), 100),
-				EntityType:   "memory_pressure_test",
+				EntityType:   mcp.EntityType("memory_pressure_test"),
 				Observations: observations,
 				CreatedAt:    time.Now(),
 			}

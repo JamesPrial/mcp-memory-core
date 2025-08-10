@@ -144,14 +144,34 @@ func (s *SqliteBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, 
 	return &entity, nil
 }
 
-// SearchEntities searches for entities by name using a LIKE query
+// SearchEntities searches for entities by name and observations using case-insensitive LIKE queries
+// This implementation matches the memory backend behavior:
+// - Case-insensitive search
+// - Searches both entity names and observations
+// - Empty query returns all entities
 func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp.Entity, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, entity_type, observations, created_at
-		FROM entities
-		WHERE name LIKE ?
-		ORDER BY created_at DESC
-	`, "%"+query+"%")
+	var rows *sql.Rows
+	var err error
+	
+	// Handle empty query - return all entities (matches memory backend behavior)
+	if query == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, name, entity_type, observations, created_at
+			FROM entities
+			ORDER BY created_at DESC
+		`)
+	} else {
+		// Search both name and observations with case-insensitive matching
+		searchPattern := "%" + query + "%"
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, name, entity_type, observations, created_at
+			FROM entities
+			WHERE name LIKE ? COLLATE NOCASE 
+			   OR observations LIKE ? COLLATE NOCASE
+			ORDER BY created_at DESC
+		`, searchPattern, searchPattern)
+	}
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to query entities: %w", err)
 	}
@@ -219,7 +239,10 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 		if err := rows.Scan(&entityType, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan entity type count: %w", err)
 		}
-		stats[fmt.Sprintf("entities_%s", entityType)] = count
+		// Use "type_" prefix to match memory backend convention
+		if entityType != "" {
+			stats[fmt.Sprintf("type_%s", entityType)] = count
+		}
 	}
 
 	if err := rows.Err(); err != nil {

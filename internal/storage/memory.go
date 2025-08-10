@@ -81,7 +81,7 @@ func (m *MemoryBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 	typeCounts := make(map[string]int)
 	for _, entity := range m.entities {
 		if entity.EntityType != "" {
-			typeCounts[entity.EntityType]++
+			typeCounts[string(entity.EntityType)]++
 		}
 	}
 	

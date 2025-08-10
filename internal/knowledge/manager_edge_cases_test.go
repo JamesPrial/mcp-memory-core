@@ -444,14 +444,15 @@ func TestManager_EdgeCases_CreateEntities_EntityProcessing(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("EntityIdGeneration", func(t *testing.T) {
-		// Test ID generation for entities without IDs
+		// Test ID generation for entities without IDs - now uses UUIDs
 		mockStorage.On("CreateEntities", mock.Anything, mock.MatchedBy(func(entities []mcp.Entity) bool {
 			// Verify all entities have IDs
 			for _, entity := range entities {
 				if entity.ID == "" {
 					return false
 				}
-				if !strings.HasPrefix(entity.ID, "entity_") {
+				// UUID format check: should be 36 chars (including hyphens)
+				if len(entity.ID) != 36 {
 					return false
 				}
 			}
@@ -589,30 +590,28 @@ func TestManager_EdgeCases_NilAndEmptyValues(t *testing.T) {
 }
 
 func TestGenerateEntityID_EdgeCases(t *testing.T) {
-	testCases := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"EmptyName", "", "entity_"},
-		{"UnicodeName", "测试名称", "entity_"},
-		{"VeryLongName", strings.Repeat("a", 10000), "entity_"},
-		{"SpecialCharName", "!@#$%^&*()", "entity_"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			id := generateEntityID(tc.input)
-			assert.True(t, strings.HasPrefix(id, tc.expected), "ID should start with %s, got: %s", tc.expected, id)
-			assert.Greater(t, len(id), len(tc.expected), "ID should be longer than just the prefix")
-		})
-	}
+	// generateEntityID now takes no parameters and returns UUIDs
+	t.Run("UUIDFormat", func(t *testing.T) {
+		id := generateEntityID()
+		// UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+		assert.Equal(t, 36, len(id), "UUID should be 36 characters long")
+		assert.Contains(t, id, "-", "UUID should contain hyphens")
+		
+		// Check UUID structure
+		parts := strings.Split(id, "-")
+		assert.Equal(t, 5, len(parts), "UUID should have 5 parts")
+		assert.Equal(t, 8, len(parts[0]))
+		assert.Equal(t, 4, len(parts[1]))
+		assert.Equal(t, 4, len(parts[2]))
+		assert.Equal(t, 4, len(parts[3]))
+		assert.Equal(t, 12, len(parts[4]))
+	})
 
 	// Test uniqueness
 	t.Run("Uniqueness", func(t *testing.T) {
 		ids := make(map[string]bool)
 		for i := 0; i < 1000; i++ {
-			id := generateEntityID("test")
+			id := generateEntityID()
 			assert.False(t, ids[id], "Generated duplicate ID: %s", id)
 			ids[id] = true
 		}

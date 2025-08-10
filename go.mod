@@ -3,6 +3,7 @@ module github.com/JamesPrial/mcp-memory-core
 go 1.22.2
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.8.4
 	gopkg.in/yaml.v3 v3.0.1
 )

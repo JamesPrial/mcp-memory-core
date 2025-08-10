@@ -7,6 +7,7 @@ import (
 
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
+	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -79,6 +80,8 @@ func (m *Manager) handleCreateEntities(ctx context.Context, args map[string]inte
 	}
 
 	var entities []mcp.Entity
+	now := time.Now()
+	
 	for i, entityRaw := range entitiesSlice {
 		var entity mcp.Entity
 		
@@ -87,15 +90,18 @@ func (m *Manager) handleCreateEntities(ctx context.Context, args map[string]inte
 			return nil, fmt.Errorf("failed to decode entity at index %d: %w", i, err)
 		}
 
-		// Generate ID if not provided
+		// Generate ID if not provided using UUID for global uniqueness
 		if entity.ID == "" {
-			entity.ID = generateEntityID(entity.Name)
+			entity.ID = generateEntityID()
 		}
 
-		// Set created timestamp
+		// Set created timestamp if not provided
 		if entity.CreatedAt.IsZero() {
-			entity.CreatedAt = time.Now()
+			entity.CreatedAt = now
 		}
+
+		// Always set updated timestamp to current time
+		entity.UpdatedAt = now
 
 		entities = append(entities, entity)
 	}
@@ -163,7 +169,7 @@ func (m *Manager) handleGetStatistics(ctx context.Context, args map[string]inter
 	return stats, nil
 }
 
-// generateEntityID generates a simple ID based on entity name
-func generateEntityID(name string) string {
-	return fmt.Sprintf("entity_%d", time.Now().UnixNano())
+// generateEntityID generates a globally unique ID using UUID
+func generateEntityID() string {
+	return uuid.New().String()
 }
