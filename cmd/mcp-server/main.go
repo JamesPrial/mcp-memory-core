@@ -51,8 +51,107 @@ func NewServer(manager *knowledge.Manager) *Server {
 	}
 }
 
+// validateRequest validates a JSON-RPC request and returns an error response if invalid
+func (s *Server) validateRequest(req *JSONRPCRequest) *JSONRPCResponse {
+	// Check if request is nil
+	if req == nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    "Request cannot be null",
+			},
+		}
+	}
+
+	// Validate jsonrpc field
+	if req.JSONRPC != "2.0" {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    "Invalid or missing 'jsonrpc' field, must be '2.0'",
+			},
+		}
+	}
+
+	// Validate method field
+	if req.Method == "" {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    "Missing or empty 'method' field",
+			},
+		}
+	}
+
+	// ID field validation - it can be string, number, or null, but not missing entirely
+	// In JSON-RPC 2.0, notifications don't have ID, but regular requests must have one
+	if req.ID == nil {
+		// This could be a notification, but for MCP we require IDs
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    "Missing 'id' field - notifications are not supported",
+			},
+		}
+	}
+
+	return nil // Request is valid
+}
+
+// sanitizeError converts internal errors to user-safe messages
+func (s *Server) sanitizeError(err error) string {
+	if err == nil {
+		return "Unknown error occurred"
+	}
+
+	errMsg := err.Error()
+	
+	// Replace internal error patterns with user-friendly messages
+	if strings.Contains(errMsg, "database") || strings.Contains(errMsg, "sql") {
+		return "Storage operation failed"
+	}
+	if strings.Contains(errMsg, "memory") || strings.Contains(errMsg, "allocation") {
+		return "Memory operation failed"
+	}
+	if strings.Contains(errMsg, "permission") || strings.Contains(errMsg, "access") {
+		return "Access denied"
+	}
+	if strings.Contains(errMsg, "connection") || strings.Contains(errMsg, "network") {
+		return "Connection error"
+	}
+	if strings.Contains(errMsg, "timeout") {
+		return "Operation timed out"
+	}
+	if strings.Contains(errMsg, "not found") {
+		return "Requested resource not found"
+	}
+	if strings.Contains(errMsg, "invalid") || strings.Contains(errMsg, "malformed") {
+		return "Invalid input provided"
+	}
+
+	// For any other errors, return a generic message
+	return "Internal server error"
+}
+
 // HandleRequest processes a JSON-RPC request and returns a response
 func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
+	// First, validate the request
+	if validationErr := s.validateRequest(req); validationErr != nil {
+		return validationErr
+	}
+
 	switch req.Method {
 	case "tools/list":
 		return s.handleToolsList(req)
@@ -65,6 +164,7 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRP
 			Error: &JSONRPCError{
 				Code:    -32601,
 				Message: "Method not found",
+				Data:    fmt.Sprintf("Method '%s' is not supported", req.Method),
 			},
 		}
 	}
@@ -72,6 +172,12 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRP
 
 // handleToolsList handles the tools/list method
 func (s *Server) handleToolsList(req *JSONRPCRequest) *JSONRPCResponse {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic in handleToolsList: %v", r)
+		}
+	}()
+
 	tools := s.manager.HandleListTools()
 	
 	return &JSONRPCResponse{
@@ -85,6 +191,25 @@ func (s *Server) handleToolsList(req *JSONRPCRequest) *JSONRPCResponse {
 
 // handleToolsCall handles the tools/call method
 func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic in handleToolsCall: %v", r)
+		}
+	}()
+
+	// Validate params exists
+	if req.Params == nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32602,
+				Message: "Invalid params",
+				Data:    "Missing 'params' field for tools/call method",
+			},
+		}
+	}
+
 	// Extract tool name from params
 	name, ok := req.Params["name"]
 	if !ok {
@@ -93,7 +218,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name is required",
+				Message: "Invalid params",
+				Data:    "Missing 'name' field in params",
 			},
 		}
 	}
@@ -105,7 +231,20 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name must be a string",
+				Message: "Invalid params",
+				Data:    "Field 'name' must be a string",
+			},
+		}
+	}
+
+	if toolName == "" {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32602,
+				Message: "Invalid params",
+				Data:    "Field 'name' cannot be empty",
 			},
 		}
 	}
@@ -115,18 +254,30 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	if args, exists := req.Params["arguments"]; exists {
 		if argsMap, ok := args.(map[string]interface{}); ok {
 			arguments = argsMap
+		} else {
+			return &JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &JSONRPCError{
+					Code:    -32602,
+					Message: "Invalid params",
+					Data:    "Field 'arguments' must be an object",
+				},
+			}
 		}
 	}
 
 	// Call the tool
 	result, err := s.manager.HandleCallTool(ctx, toolName, arguments)
 	if err != nil {
+		sanitizedMsg := s.sanitizeError(err)
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32603,
-				Message: fmt.Sprintf("Internal error: %s", err.Error()),
+				Message: "Internal error",
+				Data:    sanitizedMsg,
 			},
 		}
 	}
@@ -158,6 +309,7 @@ func (s *Server) Run(ctx context.Context) error {
 				Error: &JSONRPCError{
 					Code:    -32700,
 					Message: "Parse error",
+					Data:    "Invalid JSON format",
 				},
 			}
 			s.sendResponse(resp)
@@ -181,6 +333,19 @@ func (s *Server) sendResponse(resp *JSONRPCResponse) {
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("Error marshaling response: %v", err)
+		// Send a generic error response if marshaling fails
+		fallbackResp := &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      nil,
+			Error: &JSONRPCError{
+				Code:    -32603,
+				Message: "Internal error",
+				Data:    "Failed to serialize response",
+			},
+		}
+		if fallbackBytes, fallbackErr := json.Marshal(fallbackResp); fallbackErr == nil {
+			fmt.Println(string(fallbackBytes))
+		}
 		return
 	}
 	
