@@ -22,19 +22,43 @@ type SqliteSettings struct {
 
 // Validate validates the configuration settings
 func (s *Settings) Validate() error {
-	// Validate LogLevel - must be one of [debug, info, warn, error]
-	validLogLevels := map[string]bool{
-		"debug": true,
-		"info":  true,
-		"warn":  true,
-		"error": true,
+	// Validate LogLevel - must be one of [debug, info, warn, error] (case-insensitive)
+	// Empty log level is allowed and will use default
+	if s.LogLevel != "" {
+		validLogLevels := map[string]bool{
+			"debug": true,
+			"info":  true,
+			"warn":  true,
+			"error": true,
+		}
+		normalizedLogLevel := strings.ToLower(s.LogLevel)
+		if !validLogLevels[normalizedLogLevel] {
+			return fmt.Errorf("logLevel must be one of [debug, info, warn, error], got '%s'", s.LogLevel)
+		}
+		// Normalize the log level in the config
+		s.LogLevel = normalizedLogLevel
 	}
-	if !validLogLevels[s.LogLevel] {
-		return fmt.Errorf("logLevel must be one of [debug, info, warn, error], got '%s'", s.LogLevel)
+
+	// Validate StorageType - must be one of [memory, sqlite] (case-insensitive)
+	validStorageTypes := map[string]bool{
+		"memory": true,
+		"sqlite": true,
+		"":       true, // Empty defaults to memory
+	}
+	normalizedStorageType := strings.ToLower(s.StorageType)
+	if !validStorageTypes[normalizedStorageType] {
+		return fmt.Errorf("storageType must be one of [memory, sqlite], got '%s'", s.StorageType)
+	}
+	// Normalize the storage type
+	s.StorageType = normalizedStorageType
+
+	// Validate HTTPPort - must be a valid port number
+	if s.HTTPPort < 0 || s.HTTPPort > 65535 {
+		return fmt.Errorf("httpPort must be between 0 and 65535, got %d", s.HTTPPort)
 	}
 
 	// Validate SQLite path - if storageType is sqlite, storagePath must not be empty
-	if strings.ToLower(s.StorageType) == "sqlite" && strings.TrimSpace(s.StoragePath) == "" {
+	if normalizedStorageType == "sqlite" && strings.TrimSpace(s.StoragePath) == "" {
 		return fmt.Errorf("storagePath cannot be empty when storageType is sqlite")
 	}
 

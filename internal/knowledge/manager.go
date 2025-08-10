@@ -69,6 +69,13 @@ func (m *Manager) HandleCallTool(ctx context.Context, toolName string, args map[
 
 // handleCreateEntities processes entity creation requests
 func (m *Manager) handleCreateEntities(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	entitiesRaw, ok := args["entities"]
 	if !ok {
 		return nil, fmt.Errorf("entities parameter is required")
@@ -83,6 +90,12 @@ func (m *Manager) handleCreateEntities(ctx context.Context, args map[string]inte
 	now := time.Now()
 	
 	for i, entityRaw := range entitiesSlice {
+		// Check context during iteration for large batches
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		var entity mcp.Entity
 		
 		// Use mapstructure to convert map[string]interface{} to mcp.Entity
@@ -118,6 +131,13 @@ func (m *Manager) handleCreateEntities(ctx context.Context, args map[string]inte
 
 // handleSearch processes search requests
 func (m *Manager) handleSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	query, ok := args["query"]
 	if !ok {
 		return nil, fmt.Errorf("query parameter is required")
@@ -141,6 +161,13 @@ func (m *Manager) handleSearch(ctx context.Context, args map[string]interface{})
 
 // handleGetEntity processes get entity requests
 func (m *Manager) handleGetEntity(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	id, ok := args["id"]
 	if !ok {
 		return nil, fmt.Errorf("id parameter is required")
@@ -161,6 +188,13 @@ func (m *Manager) handleGetEntity(ctx context.Context, args map[string]interface
 
 // handleGetStatistics processes get statistics requests
 func (m *Manager) handleGetStatistics(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	stats, err := m.storage.GetStatistics(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get statistics: %w", err)

@@ -101,14 +101,15 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		}
 		
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
-		assert.NoError(t, err)
+		// Empty ID should now be rejected
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "entity ID cannot be empty or whitespace-only")
 		
-		// Should be able to retrieve by empty ID
+		// Should NOT be able to retrieve by empty ID
 		retrieved, err := backend.GetEntity(ctx, "")
-		require.NoError(t, err)
-		assert.Equal(t, "", retrieved.Name)
-		assert.Equal(t, mcp.EntityType(""), retrieved.EntityType)
-		assert.Len(t, retrieved.Observations, 3)
+		assert.Error(t, err)
+		assert.Nil(t, retrieved)
+		assert.Contains(t, err.Error(), "entity not found")
 	})
 }
 
@@ -124,15 +125,17 @@ func TestMemoryBackend_EdgeCases_GetEntity(t *testing.T) {
 	})
 
 	t.Run("EmptyStringID", func(t *testing.T) {
-		// First create entity with empty ID
+		// First try to create entity with empty ID
 		entity := mcp.Entity{ID: "", Name: "empty id entity"}
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
-		require.NoError(t, err)
+		// Empty ID should be rejected  
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "entity ID cannot be empty or whitespace-only")
 		
-		// Should be retrievable
+		// Should NOT be retrievable
 		retrieved, err := backend.GetEntity(ctx, "")
-		require.NoError(t, err)
-		assert.Equal(t, "empty id entity", retrieved.Name)
+		assert.Error(t, err)
+		assert.Nil(t, retrieved)
 	})
 
 	t.Run("SpecialCharacterIDs", func(t *testing.T) {
@@ -490,9 +493,9 @@ func TestMemoryBackend_EdgeCases_ContextCancellation(t *testing.T) {
 		
 		entity := mcp.Entity{ID: "cancelled", Name: "Should not be created"}
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
-		// Memory backend doesn't check context cancellation, so this will succeed
-		// but in a real implementation, you might want to check ctx.Done()
-		assert.NoError(t, err)
+		// Memory backend now checks context cancellation
+		assert.Error(t, err)
+		assert.Equal(t, context.Canceled, err)
 	})
 
 	t.Run("TimeoutContext", func(t *testing.T) {
@@ -502,8 +505,9 @@ func TestMemoryBackend_EdgeCases_ContextCancellation(t *testing.T) {
 		
 		entity := mcp.Entity{ID: "timeout", Name: "Should timeout"}
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
-		// Memory backend doesn't check context timeout, so this will succeed
-		assert.NoError(t, err)
+		// Memory backend now checks context timeout
+		assert.Error(t, err)
+		assert.Equal(t, context.DeadlineExceeded, err)
 	})
 }
 

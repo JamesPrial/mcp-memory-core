@@ -8,6 +8,9 @@ import (
 
 // NewBackend creates a new storage backend based on the configuration
 func NewBackend(cfg *config.Settings) (Backend, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
+	}
 	switch cfg.StorageType {
 	case "sqlite":
 		if cfg.StoragePath == "" {

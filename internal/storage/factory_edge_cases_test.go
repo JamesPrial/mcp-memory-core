@@ -13,17 +13,11 @@ import (
 
 func TestNewBackend_EdgeCases_InvalidConfigs(t *testing.T) {
 	t.Run("NilConfig", func(t *testing.T) {
-		// Should panic when trying to access nil config
-		defer func() {
-			if r := recover(); r != nil {
-				assert.Contains(t, fmt.Sprintf("%v", r), "nil pointer")
-			}
-		}()
-		
+		// Should return an error when passing nil config
 		backend, err := NewBackend(nil)
-		if err == nil && backend != nil {
-			t.Error("Expected error or panic when passing nil config")
-		}
+		assert.Nil(t, backend)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "configuration cannot be nil")
 	})
 
 	t.Run("EmptyConfig", func(t *testing.T) {

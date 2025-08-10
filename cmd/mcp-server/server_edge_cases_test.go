@@ -22,19 +22,15 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 
 	// These should return -32600 Invalid Request (malformed)
 	invalidRequestMethods := []string{
-		"",
-		"../tools/list",        // Path traversal attempt
-		"tools/../list",        // Path traversal attempt
+		"",  // Empty method
 		"\x00tools/list",       // Null byte
 		"tools/list\x00",       // Null byte
 		"tools/list\n",         // Newline
 		"tools/list\t",         // Tab
-		" tools/list ",         // Spaces
-		"🦄tools/list",         // Unicode
-		"tools/list🦄",         // Unicode
-		"'; DROP TABLE tools; --", // SQL injection attempt
-		"<script>alert('xss')</script>", // XSS attempt
-		strings.Repeat("a", 10000), // Very long method name
+		"../tools/list",        // Contains ".."
+		"tools/../list",        // Contains ".."
+		"tools//list",          // Contains "//"
+		strings.Repeat("a", 101), // Method name too long (>100 chars)
 	}
 
 	// These should return -32601 Method not found (valid format, unknown method)
@@ -48,6 +44,11 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 		"tools.list",           // Wrong separator
 		"tools\\list",          // Wrong separator
 		"tools/call/extra",     // Extra path
+		" tools/list ",         // Spaces (valid as a method name)
+		"🦄tools/list",         // Unicode (valid as a method name)
+		"tools/list🦄",         // Unicode (valid as a method name)
+		"'; DROP TABLE tools; --", // SQL injection attempt (valid as a method name)
+		"<script>alert('xss')</script>", // XSS attempt (valid as a method name)
 	}
 
 	for _, method := range invalidRequestMethods {
@@ -705,11 +706,12 @@ func TestServer_EdgeCases_BoundaryConditions(t *testing.T) {
 
 func TestNewServer_EdgeCases(t *testing.T) {
 	t.Run("NilManager", func(t *testing.T) {
+		// NewServer should accept nil manager but handle it gracefully
 		server := NewServer(nil)
 		assert.NotNil(t, server)
 		assert.Nil(t, server.manager)
 		
-		// Using the server with nil manager should cause issues
+		// Using the server with nil manager should return error responses
 		ctx := context.Background()
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -717,14 +719,25 @@ func TestNewServer_EdgeCases(t *testing.T) {
 			Method:  "tools/list",
 		}
 		
-		defer func() {
-			if r := recover(); r != nil {
-				assert.Contains(t, fmt.Sprintf("%v", r), "nil pointer")
-			}
-		}()
-		
 		resp := server.HandleRequest(ctx, req)
-		// The server should return a response even with nil manager, or panic
 		assert.NotNil(t, resp)
+		assert.NotNil(t, resp.Error)
+		assert.Equal(t, -32603, resp.Error.Code)
+		assert.Equal(t, "Internal error", resp.Error.Message)
+		assert.Equal(t, "Server not properly initialized", resp.Error.Data)
+		
+		// Test tools/call as well
+		req.Method = "tools/call"
+		req.Params = map[string]interface{}{
+			"name": "memory__create_entities",
+			"arguments": map[string]interface{}{},
+		}
+		
+		resp = server.HandleRequest(ctx, req)
+		assert.NotNil(t, resp)
+		assert.NotNil(t, resp.Error)
+		assert.Equal(t, -32603, resp.Error.Code)
+		assert.Equal(t, "Internal error", resp.Error.Message)
+		assert.Equal(t, "Server not properly initialized", resp.Error.Data)
 	})
 }

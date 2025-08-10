@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
+	"github.com/JamesPrial/mcp-memory-core/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -162,7 +164,10 @@ func TestHandleRequest_MethodNotFound(t *testing.T) {
 }
 
 func TestHandleToolsCall_ValidationErrors(t *testing.T) {
-	server := &Server{}
+	// Create a server with a mock manager
+	mockStorage := new(storage.MockBackend)
+	manager := knowledge.NewManager(mockStorage)
+	server := NewServer(manager)
 	
 	tests := []struct {
 		name           string
