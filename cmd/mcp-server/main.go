@@ -110,6 +110,26 @@ func (s *Server) validateRequest(req *JSONRPCRequest) *JSONRPCResponse {
 	return nil // Request is valid
 }
 
+// isValidToolName validates that a tool name is properly formatted
+func isValidToolName(name string) bool {
+	// Tool name must not be empty and should have reasonable length
+	if name == "" || len(name) > 100 {
+		return false
+	}
+	
+	// Tool name should only contain lowercase alphanumeric characters, underscores, and hyphens
+	// No special characters, unicode, spaces, etc.
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || 
+			 (r >= 'A' && r <= 'Z') ||
+			 (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return false
+		}
+	}
+	
+	return true
+}
+
 // isValidMethodName validates that a method name is properly formatted
 func isValidMethodName(method string) bool {
 	// Method must not be empty and should have reasonable length
@@ -117,13 +137,24 @@ func isValidMethodName(method string) bool {
 		return false
 	}
 	
-	// Method should only contain alphanumeric characters, forward slashes, and underscores
-	// This follows common JSON-RPC patterns like "namespace/method" or "namespace_method"
+	// Method should only contain lowercase alphanumeric characters, forward slashes, and underscores
+	// Must be all lowercase to prevent case variations
+	// No dots, hyphens, or other special characters allowed
 	for _, r := range method {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || 
+		if !((r >= 'a' && r <= 'z') || 
 			 (r >= '0' && r <= '9') || r == '/' || r == '_') {
 			return false
 		}
+	}
+	
+	// Check for path traversal attempts
+	if strings.Contains(method, "..") || strings.Contains(method, "//") {
+		return false
+	}
+	
+	// Method should not have extra path segments beyond expected pattern
+	if strings.Count(method, "/") > 1 {
+		return false
 	}
 	
 	return true
@@ -148,7 +179,7 @@ func (s *Server) sanitizeError(err error) string {
 		return "Access denied"
 	}
 	if strings.Contains(errMsg, "connection") || strings.Contains(errMsg, "network") {
-		return "Storage operation failed"  // Map connection errors to storage for consistency
+		return "Connection error"
 	}
 	if strings.Contains(errMsg, "timeout") {
 		return "Operation timed out"
@@ -161,7 +192,7 @@ func (s *Server) sanitizeError(err error) string {
 	}
 
 	// For any other errors, return a generic message
-	return "Internal error"
+	return "Internal server error"
 }
 
 // HandleRequest processes a JSON-RPC request and returns a response
@@ -236,8 +267,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name is required",
-				Data:    nil,
+				Message: "Invalid params",
+				Data:    "Missing 'params' field for tools/call method",
 			},
 		}
 	}
@@ -250,8 +281,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name is required",
-				Data:    nil,
+				Message: "Invalid params",
+				Data:    "Missing 'name' field in params",
 			},
 		}
 	}
@@ -263,8 +294,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name must be a string",
-				Data:    nil,
+				Message: "Invalid params",
+				Data:    "Field 'name' must be a string",
 			},
 		}
 	}
@@ -275,8 +306,22 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			ID:      req.ID,
 			Error: &JSONRPCError{
 				Code:    -32602,
-				Message: "Invalid params: name cannot be empty",
-				Data:    nil,
+				Message: "Invalid params",
+				Data:    "Field 'name' cannot be empty",
+			},
+		}
+	}
+	
+	// Validate tool name format - should contain only alphanumeric, underscores
+	// Tool names shouldn't have special characters, unicode, etc.
+	if !isValidToolName(toolName) {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32602,
+				Message: "Invalid params",
+				Data:    "Field 'name' contains invalid characters",
 			},
 		}
 	}
@@ -284,16 +329,20 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	// Extract arguments from params
 	arguments := make(map[string]interface{})
 	if args, exists := req.Params["arguments"]; exists {
-		if argsMap, ok := args.(map[string]interface{}); ok {
+		// nil arguments should be treated as empty map
+		if args == nil {
+			// Keep arguments as empty map
+		} else if argsMap, ok := args.(map[string]interface{}); ok {
 			arguments = argsMap
 		} else {
+			// Non-nil, non-map arguments are invalid
 			return &JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
 				Error: &JSONRPCError{
 					Code:    -32602,
-					Message: "Invalid params: arguments must be an object",
-					Data:    nil,
+					Message: "Invalid params",
+					Data:    "Field 'arguments' must be an object",
 				},
 			}
 		}

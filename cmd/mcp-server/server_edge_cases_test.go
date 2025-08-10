@@ -233,7 +233,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, -32602, resp.Error.Code)
-		assert.Contains(t, resp.Error.Message, "name is required")
+		assert.Contains(t, resp.Error.Message, "Invalid params")
 	})
 
 	t.Run("NilParams", func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, -32602, resp.Error.Code)
-		assert.Contains(t, resp.Error.Message, "name is required")
+		assert.Contains(t, resp.Error.Message, "Invalid params")
 	})
 
 	t.Run("EmptyParams", func(t *testing.T) {
@@ -267,7 +267,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, -32602, resp.Error.Code)
-		assert.Contains(t, resp.Error.Message, "name is required")
+		assert.Contains(t, resp.Error.Message, "Invalid params")
 	})
 
 	t.Run("NameNotString", func(t *testing.T) {
@@ -297,7 +297,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 				assert.Nil(t, resp.Result)
 				assert.NotNil(t, resp.Error)
 				assert.Equal(t, -32602, resp.Error.Code)
-				assert.Contains(t, resp.Error.Message, "name must be a string")
+				assert.Contains(t, resp.Error.Message, "Invalid params")
 			})
 		}
 	})
@@ -329,8 +329,8 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 				assert.Equal(t, 1, resp.ID)
 				assert.Nil(t, resp.Result)
 				assert.NotNil(t, resp.Error)
-				assert.Equal(t, -32603, resp.Error.Code)
-				assert.Contains(t, resp.Error.Message, "Internal error")
+				assert.Equal(t, -32602, resp.Error.Code)
+				assert.Contains(t, resp.Error.Message, "Invalid params")
 			})
 		}
 	})
@@ -367,9 +367,9 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 					assert.NotNil(t, resp.Error)
 					assert.Equal(t, -32603, resp.Error.Code)
 				} else {
-					// Non-map arguments should be ignored and passed as empty arguments
+					// Non-map arguments should return invalid params error
 					assert.NotNil(t, resp.Error)
-					assert.Equal(t, -32603, resp.Error.Code)
+					assert.Equal(t, -32602, resp.Error.Code)
 				}
 			})
 		}
@@ -392,8 +392,9 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 		assert.Equal(t, 1, resp.ID)
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
-		// Should get error from manager about missing entities parameter
-		assert.Contains(t, resp.Error.Message, "entities parameter is required")
+		// Should get invalid params error since arguments is not an object
+		assert.Equal(t, -32602, resp.Error.Code)
+		assert.Contains(t, resp.Error.Message, "Invalid params")
 	})
 
 	t.Run("ExtraParamsIgnored", func(t *testing.T) {
