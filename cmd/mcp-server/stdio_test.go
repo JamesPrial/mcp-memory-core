@@ -429,7 +429,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 				assert.Equal(t, 3, resp.ID)
 				assert.Nil(t, resp.Result)
 				assert.NotNil(t, resp.Error)
-				assert.Equal(t, -32603, resp.Error.Code)
+				assert.Equal(t, -32602, resp.Error.Code) // Invalid params since tool doesn't start with memory__
 			},
 		},
 	}

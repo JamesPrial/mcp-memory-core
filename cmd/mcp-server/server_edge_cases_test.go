@@ -20,17 +20,9 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 	server := NewServer(manager)
 	ctx := context.Background()
 
-	invalidMethods := []string{
+	// These should return -32600 Invalid Request (malformed)
+	invalidRequestMethods := []string{
 		"",
-		"invalid_method",
-		"tools/invalid",
-		"TOOLS/LIST",           // Wrong case
-		"tools/list/extra",     // Extra path
-		"tool/list",            // Missing 's'
-		"tools-list",           // Wrong separator
-		"tools.list",           // Wrong separator
-		"tools\\list",          // Wrong separator
-		"tools/call/extra",     // Extra path
 		"../tools/list",        // Path traversal attempt
 		"tools/../list",        // Path traversal attempt
 		"\x00tools/list",       // Null byte
@@ -45,8 +37,21 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 		strings.Repeat("a", 10000), // Very long method name
 	}
 
-	for _, method := range invalidMethods {
-		t.Run(fmt.Sprintf("Method_%d_chars", len(method)), func(t *testing.T) {
+	// These should return -32601 Method not found (valid format, unknown method)
+	methodNotFoundMethods := []string{
+		"invalid_method",
+		"tools/invalid",
+		"TOOLS/LIST",           // Wrong case
+		"tools/list/extra",     // Extra path
+		"tool/list",            // Missing 's'
+		"tools-list",           // Wrong separator
+		"tools.list",           // Wrong separator
+		"tools\\list",          // Wrong separator
+		"tools/call/extra",     // Extra path
+	}
+
+	for _, method := range invalidRequestMethods {
+		t.Run(fmt.Sprintf("InvalidRequest_%d_chars", len(method)), func(t *testing.T) {
 			req := &JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      1,
@@ -60,6 +65,24 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 			assert.NotNil(t, resp.Error)
 			assert.Equal(t, -32600, resp.Error.Code)
 			assert.Equal(t, "Invalid Request", resp.Error.Message)
+		})
+	}
+
+	for _, method := range methodNotFoundMethods {
+		t.Run(fmt.Sprintf("MethodNotFound_%d_chars", len(method)), func(t *testing.T) {
+			req := &JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      1,
+				Method:  method,
+			}
+			
+			resp := server.HandleRequest(ctx, req)
+			assert.Equal(t, "2.0", resp.JSONRPC)
+			assert.Equal(t, req.ID, resp.ID)
+			assert.Nil(t, resp.Result)
+			assert.NotNil(t, resp.Error)
+			assert.Equal(t, -32601, resp.Error.Code)
+			assert.Equal(t, "Method not found", resp.Error.Message)
 		})
 	}
 }
@@ -303,18 +326,23 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	})
 
 	t.Run("InvalidToolNames", func(t *testing.T) {
-		invalidToolNames := []string{
+		// These fail validation and return -32602
+		invalidParamsTools := []string{
 			"",
-			"unknown_tool",
-			"memory__invalid",
+			"unknown_tool",  // doesn't start with memory__
 			strings.Repeat("a", 10000), // Very long name
 			"\x00null_tool",
 			"🦄unicode_tool",
 			"'; DROP TABLE tools; --",
 		}
 
-		for _, toolName := range invalidToolNames {
-			t.Run(fmt.Sprintf("Tool_%d_chars", len(toolName)), func(t *testing.T) {
+		// This passes validation but tool doesn't exist, returns -32603
+		unknownTools := []string{
+			"memory__invalid",
+		}
+
+		for _, toolName := range invalidParamsTools {
+			t.Run(fmt.Sprintf("InvalidParams_%d_chars", len(toolName)), func(t *testing.T) {
 				req := &JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      1,
@@ -331,6 +359,27 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 				assert.NotNil(t, resp.Error)
 				assert.Equal(t, -32602, resp.Error.Code)
 				assert.Contains(t, resp.Error.Message, "Invalid params")
+			})
+		}
+
+		for _, toolName := range unknownTools {
+			t.Run(fmt.Sprintf("UnknownTool_%d_chars", len(toolName)), func(t *testing.T) {
+				req := &JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      1,
+					Method:  "tools/call",
+					Params: map[string]interface{}{
+						"name": toolName,
+					},
+				}
+				
+				resp := server.handleToolsCall(ctx, req)
+				assert.Equal(t, "2.0", resp.JSONRPC)
+				assert.Equal(t, 1, resp.ID)
+				assert.Nil(t, resp.Result)
+				assert.NotNil(t, resp.Error)
+				assert.Equal(t, -32603, resp.Error.Code)
+				assert.Contains(t, resp.Error.Message, "Internal error")
 			})
 		}
 	})

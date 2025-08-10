@@ -157,6 +157,11 @@ func isValidMethodName(method string) bool {
 		return false
 	}
 	
+	// Only allow specific known methods
+	if method != "tools/list" && method != "tools/call" {
+		return false
+	}
+	
 	return true
 }
 
@@ -202,8 +207,27 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRP
 		return validationErr
 	}
 
-	// Validate method format - only allow specific patterns
-	if !isValidMethodName(req.Method) {
+	// Check for malformed method names (containing invalid characters, etc.)
+	// This is -32600 Invalid Request
+	for _, r := range req.Method {
+		if !((r >= 'a' && r <= 'z') || 
+			 (r >= 'A' && r <= 'Z') ||
+			 (r >= '0' && r <= '9') || r == '/' || r == '_' || r == '-' || r == '.' || r == '\\') {
+			return &JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Error: &JSONRPCError{
+					Code:    -32600,
+					Message: "Invalid Request",
+					Data:    fmt.Sprintf("Invalid method format: '%s'", req.Method),
+				},
+			}
+		}
+	}
+	
+	// Check for other invalid patterns
+	if len(req.Method) > 100 || strings.Contains(req.Method, "..") || strings.Contains(req.Method, "//") ||
+		strings.Contains(req.Method, "\x00") || strings.Contains(req.Method, "\n") || strings.Contains(req.Method, "\t") {
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -221,6 +245,7 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRP
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
 	default:
+		// This is -32601 Method not found (for valid format but unknown method)
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -312,6 +337,27 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 		}
 	}
 	
+	// Check arguments format first (before validating tool name)
+	// This ensures we give consistent error messages for malformed arguments
+	if args, exists := req.Params["arguments"]; exists {
+		// nil arguments should be treated as empty map
+		if args != nil {
+			// Non-nil arguments must be a map
+			if _, ok := args.(map[string]interface{}); !ok {
+				// Non-nil, non-map arguments are invalid
+				return &JSONRPCResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error: &JSONRPCError{
+						Code:    -32602,
+						Message: "Invalid params",
+						Data:    "Field 'arguments' must be an object",
+					},
+				}
+			}
+		}
+	}
+	
 	// Validate tool name format - should contain only alphanumeric, underscores
 	// Tool names shouldn't have special characters, unicode, etc.
 	if !isValidToolName(toolName) {
@@ -321,30 +367,34 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			Error: &JSONRPCError{
 				Code:    -32602,
 				Message: "Invalid params",
-				Data:    "Field 'name' contains invalid characters",
+				Data:    "Field 'name' contains invalid characters or unknown tool",
+			},
+		}
+	}
+	
+	// Check if the tool exists (basic validation for known patterns)
+	if !strings.HasPrefix(toolName, "memory__") {
+		// Tool doesn't match expected pattern
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32602,
+				Message: "Invalid params",
+				Data:    "Unknown tool name",
 			},
 		}
 	}
 
-	// Extract arguments from params
+	// Extract arguments from params (we've already validated the format above)
 	arguments := make(map[string]interface{})
 	if args, exists := req.Params["arguments"]; exists {
 		// nil arguments should be treated as empty map
-		if args == nil {
-			// Keep arguments as empty map
-		} else if argsMap, ok := args.(map[string]interface{}); ok {
-			arguments = argsMap
-		} else {
-			// Non-nil, non-map arguments are invalid
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error: &JSONRPCError{
-					Code:    -32602,
-					Message: "Invalid params",
-					Data:    "Field 'arguments' must be an object",
-				},
+		if args != nil {
+			if argsMap, ok := args.(map[string]interface{}); ok {
+				arguments = argsMap
 			}
+			// We already validated above, so this should always succeed
 		}
 	}
 
