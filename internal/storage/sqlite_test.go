@@ -58,9 +58,9 @@ func TestSqliteBackend_SearchEntities(t *testing.T) {
 
 	ctx := context.Background()
 	entities := []mcp.Entity{
-		{ID: "s1", Name: "Alpha Test"},
-		{ID: "s2", Name: "Beta Test"},
-		{ID: "s3", Name: "Alpha Other"},
+		{ID: "s1", Name: "Alpha Test", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "s2", Name: "Beta Test", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "s3", Name: "Alpha Other", EntityType: "test", CreatedAt: time.Now().UTC()},
 	}
 	err := backend.CreateEntities(ctx, entities)
 	require.NoError(t, err)
@@ -68,6 +68,178 @@ func TestSqliteBackend_SearchEntities(t *testing.T) {
 	results, err := backend.SearchEntities(ctx, "Alpha")
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
+}
+
+func TestSqliteBackend_SearchEntities_CaseInsensitive(t *testing.T) {
+	backend, cleanup := newTestBackend(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	entities := []mcp.Entity{
+		{ID: "case1", Name: "UPPERCASE", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "case2", Name: "lowercase", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "case3", Name: "MixedCase", EntityType: "test", CreatedAt: time.Now().UTC()},
+	}
+	err := backend.CreateEntities(ctx, entities)
+	require.NoError(t, err)
+
+	// Test lowercase query finding uppercase entity
+	results, err := backend.SearchEntities(ctx, "uppercase")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "UPPERCASE", results[0].Name)
+
+	// Test uppercase query finding lowercase entity
+	results, err = backend.SearchEntities(ctx, "LOWERCASE")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "lowercase", results[0].Name)
+
+	// Test mixed case query
+	results, err = backend.SearchEntities(ctx, "mixedcase")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "MixedCase", results[0].Name)
+}
+
+func TestSqliteBackend_SearchEntities_InObservations(t *testing.T) {
+	backend, cleanup := newTestBackend(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	entities := []mcp.Entity{
+		{
+			ID: "obs1", 
+			Name: "Entity One", 
+			EntityType: "test", 
+			Observations: []string{"contains searchable text", "another observation"},
+			CreatedAt: time.Now().UTC(),
+		},
+		{
+			ID: "obs2", 
+			Name: "Entity Two", 
+			EntityType: "test", 
+			Observations: []string{"different content", "no match here"},
+			CreatedAt: time.Now().UTC(),
+		},
+		{
+			ID: "obs3", 
+			Name: "Entity Three", 
+			EntityType: "test", 
+			Observations: []string{"SEARCHABLE in uppercase", "case test"},
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+	err := backend.CreateEntities(ctx, entities)
+	require.NoError(t, err)
+
+	// Search for text that appears in observations
+	results, err := backend.SearchEntities(ctx, "searchable")
+	require.NoError(t, err)
+	assert.Len(t, results, 2) // Should find both obs1 and obs3 (case insensitive)
+
+	// Verify the correct entities were found
+	foundIDs := make([]string, len(results))
+	for i, result := range results {
+		foundIDs[i] = result.ID
+	}
+	assert.Contains(t, foundIDs, "obs1")
+	assert.Contains(t, foundIDs, "obs3")
+}
+
+func TestSqliteBackend_SearchEntities_EmptyQuery(t *testing.T) {
+	backend, cleanup := newTestBackend(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	
+	// First test with no entities
+	results, err := backend.SearchEntities(ctx, "")
+	require.NoError(t, err)
+	assert.Len(t, results, 0) // Should return empty results when no entities exist
+
+	// Add some entities
+	entities := []mcp.Entity{
+		{ID: "empty1", Name: "Entity One", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "empty2", Name: "Entity Two", EntityType: "test", CreatedAt: time.Now().UTC()},
+		{ID: "empty3", Name: "Entity Three", EntityType: "test", CreatedAt: time.Now().UTC()},
+	}
+	err = backend.CreateEntities(ctx, entities)
+	require.NoError(t, err)
+
+	// Now test empty query should return all entities (matches memory backend behavior)
+	results, err = backend.SearchEntities(ctx, "")
+	require.NoError(t, err)
+	assert.Len(t, results, 3) // Should return all entities
+}
+
+// Test to verify consistency between SQLite and Memory backends
+func TestBackend_Consistency_SearchBehavior(t *testing.T) {
+	// Test both backends with the same data and queries
+	testCases := []struct {
+		entities []mcp.Entity
+		query    string
+		expected int
+		name     string
+	}{
+		{
+			entities: []mcp.Entity{
+				{ID: "1", Name: "Alpha", EntityType: "test", Observations: []string{"beta"}, CreatedAt: time.Now().UTC()},
+				{ID: "2", Name: "Beta", EntityType: "test", Observations: []string{"gamma"}, CreatedAt: time.Now().UTC()},
+				{ID: "3", Name: "Gamma", EntityType: "test", Observations: []string{"alpha"}, CreatedAt: time.Now().UTC()},
+			},
+			query:    "alpha",
+			expected: 2, // Should find "Alpha" in name and entity with "alpha" in observations
+			name:     "case insensitive search in name and observations",
+		},
+		{
+			entities: []mcp.Entity{
+				{ID: "1", Name: "Test1", EntityType: "test", CreatedAt: time.Now().UTC()},
+				{ID: "2", Name: "Test2", EntityType: "test", CreatedAt: time.Now().UTC()},
+			},
+			query:    "",
+			expected: 2, // Empty query should return all entities
+			name:     "empty query returns all",
+		},
+		{
+			entities: []mcp.Entity{
+				{ID: "1", Name: "UPPER", EntityType: "test", CreatedAt: time.Now().UTC()},
+				{ID: "2", Name: "lower", EntityType: "test", CreatedAt: time.Now().UTC()},
+			},
+			query:    "LOWER",
+			expected: 1, // Should find "lower" entity (case insensitive)
+			name:     "case insensitive name search",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test SQLite backend
+			sqliteBackend, cleanup := newTestBackend(t)
+			defer cleanup()
+			
+			ctx := context.Background()
+			err := sqliteBackend.CreateEntities(ctx, tc.entities)
+			require.NoError(t, err)
+			
+			sqliteResults, err := sqliteBackend.SearchEntities(ctx, tc.query)
+			require.NoError(t, err)
+			
+			// Test Memory backend
+			memoryBackend := NewMemoryBackend()
+			err = memoryBackend.CreateEntities(ctx, tc.entities)
+			require.NoError(t, err)
+			
+			memoryResults, err := memoryBackend.SearchEntities(ctx, tc.query)
+			require.NoError(t, err)
+			
+			// Both backends should return the same number of results
+			assert.Equal(t, len(memoryResults), len(sqliteResults), 
+				"SQLite and Memory backends should return same number of results for query: %s", tc.query)
+			assert.Equal(t, tc.expected, len(sqliteResults), 
+				"SQLite backend should return expected number of results")
+		})
+	}
 }
 
 func TestSqliteBackend_ConcurrentAccess(t *testing.T) {
@@ -79,7 +251,7 @@ func TestSqliteBackend_ConcurrentAccess(t *testing.T) {
 
 	go func() {
 		for i := 0; i < 100; i++ {
-			entity := mcp.Entity{ID: fmt.Sprintf("c%d", i)}
+			entity := mcp.Entity{ID: fmt.Sprintf("c%d", i), Name: fmt.Sprintf("Concurrent %d", i), EntityType: "test", CreatedAt: time.Now().UTC()}
 			backend.CreateEntities(ctx, []mcp.Entity{entity})
 		}
 		done <- true
@@ -294,16 +466,6 @@ func TestSqliteBackend_SearchEntities_CorruptedJSON(t *testing.T) {
 	_, err = backend.SearchEntities(ctx, "SearchTest")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to unmarshal observations")
-}
-
-func TestSqliteBackend_SearchEntities_EmptyQuery(t *testing.T) {
-	backend, cleanup := newTestBackend(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	results, err := backend.SearchEntities(ctx, "")
-	assert.NoError(t, err)
-	assert.Len(t, results, 0) // Should return empty results
 }
 
 // Error case tests for GetStatistics
