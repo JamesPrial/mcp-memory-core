@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,30 +22,20 @@ type SqliteSettings struct {
 
 // Validate validates the configuration settings
 func (s *Settings) Validate() error {
-	// Validate HTTPPort
-	if s.HTTPPort < 1 || s.HTTPPort > 65535 {
-		return fmt.Errorf("httpPort must be between 1 and 65535, got %d", s.HTTPPort)
-	}
-
-	// Validate LogLevel
+	// Validate LogLevel - must be one of [debug, info, warn, error]
 	validLogLevels := map[string]bool{
 		"debug": true,
 		"info":  true,
 		"warn":  true,
 		"error": true,
-		"fatal": true,
 	}
 	if !validLogLevels[s.LogLevel] {
-		return fmt.Errorf("logLevel must be one of [debug, info, warn, error, fatal], got '%s'", s.LogLevel)
+		return fmt.Errorf("logLevel must be one of [debug, info, warn, error], got '%s'", s.LogLevel)
 	}
 
-	// Validate StorageType
-	validStorageTypes := map[string]bool{
-		"sqlite": true,
-		"memory": true,
-	}
-	if !validStorageTypes[s.StorageType] {
-		return fmt.Errorf("storageType must be one of [sqlite, memory], got '%s'", s.StorageType)
+	// Validate SQLite path - if storageType is sqlite, storagePath must not be empty
+	if strings.ToLower(s.StorageType) == "sqlite" && strings.TrimSpace(s.StoragePath) == "" {
+		return fmt.Errorf("storagePath cannot be empty when storageType is sqlite")
 	}
 
 	return nil
