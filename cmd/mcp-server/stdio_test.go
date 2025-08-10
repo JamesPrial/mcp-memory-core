@@ -429,7 +429,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 				assert.Equal(t, 3, resp.ID)
 				assert.Nil(t, resp.Result)
 				assert.NotNil(t, resp.Error)
-				assert.Equal(t, -32603, resp.Error.Code)
+				assert.Equal(t, -32602, resp.Error.Code) // Invalid params since tool doesn't start with memory__
 			},
 		},
 	}
@@ -578,9 +578,9 @@ func TestMoreEdgeCases(t *testing.T) {
 			},
 		}
 		resp := server.HandleRequest(ctx, req)
-		assert.Nil(t, resp.Result)
-		assert.NotNil(t, resp.Error)
-		assert.Equal(t, -32602, resp.Error.Code)
+		// nil arguments should be treated as empty map, so the call should succeed
+		assert.NotNil(t, resp.Result)
+		assert.Nil(t, resp.Error)
 	})
 
 	t.Run("tools/call without arguments field", func(t *testing.T) {
