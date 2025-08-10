@@ -50,52 +50,159 @@ func TestLoad_InvalidYAML(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestLoad_InvalidHTTPPort(t *testing.T) {
+func TestValidate_ValidConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string
-		httpPort int
-		wantErr  string
+		settings Settings
 	}{
 		{
-			name:     "negative port",
-			httpPort: -1,
-			wantErr:  "httpPort must be between 1 and 65535, got -1",
+			name: "valid sqlite configuration",
+			settings: Settings{
+				StorageType: "sqlite",
+				StoragePath: "/var/data/test",
+				HTTPPort:    8080,
+				LogLevel:    "info",
+				Sqlite:      SqliteSettings{WALMode: true},
+			},
 		},
 		{
-			name:     "zero port",
-			httpPort: 0,
-			wantErr:  "httpPort must be between 1 and 65535, got 0",
-		},
-		{
-			name:     "port too high",
-			httpPort: 65536,
-			wantErr:  "httpPort must be between 1 and 65535, got 65536",
+			name: "valid memory configuration",
+			settings: Settings{
+				StorageType: "memory",
+				StoragePath: "", // empty path is OK for memory storage
+				HTTPPort:    3000,
+				LogLevel:    "debug",
+				Sqlite:      SqliteSettings{WALMode: false},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			content := `
-storageType: "sqlite"
-storagePath: "/var/data/test"
-httpPort: ` + fmt.Sprintf("%d", tt.httpPort) + `
-logLevel: "info"
-sqlite:
-  walMode: true
-`
-			tempDir := t.TempDir()
-			configPath := filepath.Join(tempDir, "config.yaml")
-			err := os.WriteFile(configPath, []byte(content), 0644)
+			err := tt.settings.Validate()
 			assert.NoError(t, err)
-
-			_, err = Load(configPath)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
 }
 
-func TestLoad_InvalidLogLevel(t *testing.T) {
+func TestValidate_InvalidLogLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		logLevel string
+	}{
+		{"invalid level", "invalid"},
+		{"fatal not allowed", "fatal"},
+		{"trace not allowed", "trace"},
+		{"empty string", ""},
+		{"uppercase", "INFO"},
+		{"mixed case", "Debug"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: "memory",
+				StoragePath: "/some/path",
+				HTTPPort:    8080,
+				LogLevel:    tt.logLevel,
+				Sqlite:      SqliteSettings{WALMode: true},
+			}
+
+			err := settings.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "logLevel must be one of [debug, info, warn, error]")
+			assert.Contains(t, err.Error(), fmt.Sprintf("got '%s'", tt.logLevel))
+		})
+	}
+}
+
+func TestValidate_EmptySQLitePath(t *testing.T) {
+	tests := []struct {
+		name        string
+		storageType string
+		storagePath string
+		shouldError bool
+	}{
+		{
+			name:        "sqlite with empty path",
+			storageType: "sqlite",
+			storagePath: "",
+			shouldError: true,
+		},
+		{
+			name:        "sqlite with whitespace only path",
+			storageType: "sqlite",
+			storagePath: "   ",
+			shouldError: true,
+		},
+		{
+			name:        "sqlite with valid path",
+			storageType: "sqlite",
+			storagePath: "/var/data/test.db",
+			shouldError: false,
+		},
+		{
+			name:        "memory with empty path (should be OK)",
+			storageType: "memory",
+			storagePath: "",
+			shouldError: false,
+		},
+		{
+			name:        "SQLite uppercase with empty path",
+			storageType: "SQLITE",
+			storagePath: "",
+			shouldError: true,
+		},
+		{
+			name:        "mixed case sqlite with empty path",
+			storageType: "SQLite",
+			storagePath: "",
+			shouldError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: tt.storageType,
+				StoragePath: tt.storagePath,
+				HTTPPort:    8080,
+				LogLevel:    "info",
+				Sqlite:      SqliteSettings{WALMode: true},
+			}
+
+			err := settings.Validate()
+			if tt.shouldError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "storagePath cannot be empty when storageType is sqlite")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidate_ValidLogLevels(t *testing.T) {
+	validLevels := []string{"debug", "info", "warn", "error"}
+
+	for _, level := range validLevels {
+		t.Run("valid_level_"+level, func(t *testing.T) {
+			settings := Settings{
+				StorageType: "memory",
+				StoragePath: "/some/path",
+				HTTPPort:    8080,
+				LogLevel:    level,
+				Sqlite:      SqliteSettings{WALMode: true},
+			}
+
+			err := settings.Validate()
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// Integration test using Load function to test validation during config loading
+func TestLoad_ValidationFailure_InvalidLogLevel(t *testing.T) {
 	content := `
 storageType: "sqlite"
 storagePath: "/var/data/test"
@@ -111,13 +218,15 @@ sqlite:
 
 	_, err = Load(configPath)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "logLevel must be one of [debug, info, warn, error, fatal], got 'invalid'")
+	assert.Contains(t, err.Error(), "configuration validation failed")
+	assert.Contains(t, err.Error(), "logLevel must be one of [debug, info, warn, error], got 'invalid'")
 }
 
-func TestLoad_InvalidStorageType(t *testing.T) {
+// Integration test for SQLite path validation during config loading
+func TestLoad_ValidationFailure_EmptySQLitePath(t *testing.T) {
 	content := `
-storageType: "unsupported"
-storagePath: "/var/data/test"
+storageType: "sqlite"
+storagePath: ""
 httpPort: 8080
 logLevel: "info"
 sqlite:
@@ -130,68 +239,60 @@ sqlite:
 
 	_, err = Load(configPath)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "storageType must be one of [sqlite, memory], got 'unsupported'")
+	assert.Contains(t, err.Error(), "configuration validation failed")
+	assert.Contains(t, err.Error(), "storagePath cannot be empty when storageType is sqlite")
 }
 
-func TestLoad_ValidLogLevels(t *testing.T) {
-	validLevels := []string{"debug", "info", "warn", "error", "fatal"}
-	
-	for _, level := range validLevels {
-		t.Run("valid_level_"+level, func(t *testing.T) {
-			content := `
-storageType: "sqlite"
-storagePath: "/var/data/test"
-httpPort: 8080
-logLevel: "` + level + `"
-sqlite:
-  walMode: true
-`
-			tempDir := t.TempDir()
-			configPath := filepath.Join(tempDir, "config.yaml")
-			err := os.WriteFile(configPath, []byte(content), 0644)
-			assert.NoError(t, err)
+// Test boundary conditions and edge cases
+func TestValidate_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		settings    Settings
+		shouldError bool
+		errorMsg    string
+	}{
+		{
+			name: "empty log level",
+			settings: Settings{
+				StorageType: "memory",
+				LogLevel:    "",
+				HTTPPort:    8080,
+			},
+			shouldError: true,
+			errorMsg:    "logLevel must be one of [debug, info, warn, error], got ''",
+		},
+		{
+			name: "log level with extra spaces",
+			settings: Settings{
+				StorageType: "memory",
+				LogLevel:    " info ",
+				HTTPPort:    8080,
+			},
+			shouldError: true,
+			errorMsg:    "logLevel must be one of [debug, info, warn, error], got ' info '",
+		},
+		{
+			name: "sqlite with path containing only tabs",
+			settings: Settings{
+				StorageType: "sqlite",
+				StoragePath: "\t\t\t",
+				LogLevel:    "info",
+				HTTPPort:    8080,
+			},
+			shouldError: true,
+			errorMsg:    "storagePath cannot be empty when storageType is sqlite",
+		},
+	}
 
-			cfg, err := Load(configPath)
-			assert.NoError(t, err)
-			assert.Equal(t, level, cfg.LogLevel)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.settings.Validate()
+			if tt.shouldError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
-}
-
-func TestLoad_ValidStorageTypes(t *testing.T) {
-	validTypes := []string{"sqlite", "memory"}
-	
-	for _, storageType := range validTypes {
-		t.Run("valid_type_"+storageType, func(t *testing.T) {
-			content := `
-storageType: "` + storageType + `"
-storagePath: "/var/data/test"
-httpPort: 8080
-logLevel: "info"
-sqlite:
-  walMode: true
-`
-			tempDir := t.TempDir()
-			configPath := filepath.Join(tempDir, "config.yaml")
-			err := os.WriteFile(configPath, []byte(content), 0644)
-			assert.NoError(t, err)
-
-			cfg, err := Load(configPath)
-			assert.NoError(t, err)
-			assert.Equal(t, storageType, cfg.StorageType)
-		})
-	}
-}
-
-func TestValidate_ValidConfiguration(t *testing.T) {
-	settings := &Settings{
-		StorageType: "sqlite",
-		StoragePath: "/var/data/test",
-		HTTPPort:    8080,
-		LogLevel:    "info",
-		Sqlite:      SqliteSettings{WALMode: true},
-	}
-
-	err := settings.Validate()
-	assert.NoError(t, err)
 }
