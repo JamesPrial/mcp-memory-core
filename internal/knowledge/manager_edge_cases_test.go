@@ -531,8 +531,8 @@ func TestManager_EdgeCases_ContextHandling(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
-		// Mock storage should still be called even with cancelled context
-		mockStorage.On("CreateEntities", mock.Anything, mock.AnythingOfType("[]mcp.Entity")).Return(nil)
+		// Storage should NOT be called with cancelled context
+		// mockStorage.On("CreateEntities", mock.Anything, mock.AnythingOfType("[]mcp.Entity")).Return(nil)
 
 		args := map[string]interface{}{
 			"entities": []interface{}{
@@ -541,9 +541,10 @@ func TestManager_EdgeCases_ContextHandling(t *testing.T) {
 		}
 
 		result, err := manager.HandleCallTool(ctx, "memory__create_entities", args)
-		// The current implementation doesn't check context cancellation
-		assert.NoError(t, err)
-		assert.NotNil(t, result)
+		// Context cancellation should be checked and return an error
+		assert.Error(t, err)
+		assert.Equal(t, context.Canceled, err)
+		assert.Nil(t, result)
 	})
 
 	t.Run("TimeoutContext", func(t *testing.T) {
@@ -551,13 +552,15 @@ func TestManager_EdgeCases_ContextHandling(t *testing.T) {
 		defer cancel()
 		time.Sleep(1 * time.Millisecond) // Ensure timeout
 
-		mockStorage.On("SearchEntities", mock.Anything, "test").Return([]mcp.Entity{}, nil)
+		// Storage should NOT be called with timed out context
+		// mockStorage.On("SearchEntities", mock.Anything, "test").Return([]mcp.Entity{}, nil)
 
 		args := map[string]interface{}{"query": "test"}
 		result, err := manager.HandleCallTool(ctx, "memory__search", args)
-		// The current implementation doesn't check context timeout
-		assert.NoError(t, err)
-		assert.NotNil(t, result)
+		// Context timeout should be checked and return an error
+		assert.Error(t, err)
+		assert.Equal(t, context.DeadlineExceeded, err)
+		assert.Nil(t, result)
 	})
 }
 

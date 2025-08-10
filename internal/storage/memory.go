@@ -24,9 +24,29 @@ func NewMemoryBackend() *MemoryBackend {
 
 // CreateEntities creates new entities in memory
 func (m *MemoryBackend) CreateEntities(ctx context.Context, entities []mcp.Entity) error {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
+	// Validate all entities first before making any changes
+	for _, entity := range entities {
+		// Check for empty string IDs
+		if strings.TrimSpace(entity.ID) == "" {
+			return fmt.Errorf("entity ID cannot be empty or whitespace-only")
+		}
+		// Check for duplicate IDs
+		if _, exists := m.entities[entity.ID]; exists {
+			return fmt.Errorf("entity with ID '%s' already exists", entity.ID)
+		}
+	}
+	
+	// All validations passed, now create the entities
 	for _, entity := range entities {
 		m.entities[entity.ID] = entity
 	}
@@ -35,6 +55,13 @@ func (m *MemoryBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 
 // GetEntity retrieves an entity by ID from memory
 func (m *MemoryBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	
@@ -47,6 +74,13 @@ func (m *MemoryBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, 
 
 // SearchEntities searches for entities by query in memory
 func (m *MemoryBackend) SearchEntities(ctx context.Context, query string) ([]mcp.Entity, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	
@@ -70,6 +104,13 @@ func (m *MemoryBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 
 // GetStatistics returns statistics about the memory storage
 func (m *MemoryBackend) GetStatistics(ctx context.Context) (map[string]int, error) {
+	// Check context cancellation early
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	

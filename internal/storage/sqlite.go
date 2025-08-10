@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	_ "github.com/mattn/go-sqlite3"
@@ -54,16 +55,39 @@ func (s *SqliteBackend) initSchema() error {
 		name TEXT NOT NULL,
 		entity_type TEXT NOT NULL,
 		observations TEXT, -- JSON array stored as text
-		created_at DATETIME NOT NULL
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
 	);
 	
 	CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 	CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
 	CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
+	CREATE INDEX IF NOT EXISTS idx_entities_updated_at ON entities(updated_at);
 	`
 
 	_, err := s.db.Exec(createEntitiesTable)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add updated_at column if it doesn't exist (for existing databases)
+	_, err = s.db.Exec(`
+		ALTER TABLE entities ADD COLUMN updated_at DATETIME;
+	`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		// Only return error if it's not a "column already exists" error
+		return fmt.Errorf("failed to add updated_at column: %w", err)
+	}
+
+	// Update any existing records that don't have updated_at
+	_, err = s.db.Exec(`
+		UPDATE entities SET updated_at = created_at WHERE updated_at IS NULL;
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to initialize updated_at values: %w", err)
+	}
+
+	return nil
 }
 
 // CreateEntities inserts multiple entities into the database
@@ -79,8 +103,14 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO entities (id, name, entity_type, observations, created_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO entities (id, name, entity_type, observations, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			entity_type = excluded.entity_type,
+			observations = excluded.observations,
+			updated_at = excluded.updated_at
+			-- created_at is NOT updated, preserving original creation time
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -88,6 +118,11 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 	defer stmt.Close()
 
 	for _, entity := range entities {
+		// Check for empty string IDs
+		if strings.TrimSpace(entity.ID) == "" {
+			return fmt.Errorf("entity ID cannot be empty or whitespace-only")
+		}
+		
 		// Serialize observations to JSON
 		observationsJSON, err := json.Marshal(entity.Observations)
 		if err != nil {
@@ -100,6 +135,7 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 			entity.EntityType, 
 			string(observationsJSON), 
 			entity.CreatedAt,
+			entity.UpdatedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert entity %s: %w", entity.ID, err)
@@ -112,7 +148,7 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 // GetEntity retrieves a single entity by ID
 func (s *SqliteBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, entity_type, observations, created_at
+		SELECT id, name, entity_type, observations, created_at, updated_at
 		FROM entities
 		WHERE id = ?
 	`, id)
@@ -126,6 +162,7 @@ func (s *SqliteBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, 
 		&entity.EntityType,
 		&observationsJSON,
 		&entity.CreatedAt,
+		&entity.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -156,7 +193,7 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 	// Handle empty query - return all entities (matches memory backend behavior)
 	if query == "" {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, name, entity_type, observations, created_at
+			SELECT id, name, entity_type, observations, created_at, updated_at
 			FROM entities
 			ORDER BY created_at DESC
 		`)
@@ -164,7 +201,7 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 		// Search both name and observations with case-insensitive matching
 		searchPattern := "%" + query + "%"
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, name, entity_type, observations, created_at
+			SELECT id, name, entity_type, observations, created_at, updated_at
 			FROM entities
 			WHERE name LIKE ? COLLATE NOCASE 
 			   OR observations LIKE ? COLLATE NOCASE
@@ -188,6 +225,7 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 			&entity.EntityType,
 			&observationsJSON,
 			&entity.CreatedAt,
+			&entity.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan entity: %w", err)

@@ -30,9 +30,11 @@ jobs:
   build-docker:
     name: Build Docker Image
     runs-on: ubuntu-latest
+    needs: build-and-test  # Only run if tests pass
+    if: success()          # Explicitly require success
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag mcp-memory-core:latest
+      run: docker build . --file Dockerfile --tag mcp-memory-core:${{ github.sha }} --tag mcp-memory-core:latest

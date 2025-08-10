@@ -85,6 +85,33 @@ func TestValidate_ValidConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidate_CaseInsensitiveLogLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		logLevel string
+		expected string // normalized value
+	}{
+		{"uppercase INFO", "INFO", "info"},
+		{"uppercase DEBUG", "DEBUG", "debug"},
+		{"mixed case Warn", "Warn", "warn"},
+		{"mixed case ErRoR", "ErRoR", "error"},
+		{"empty string allowed", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: "memory",
+				LogLevel:    tt.logLevel,
+			}
+
+			err := settings.Validate()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, settings.LogLevel)
+		})
+	}
+}
+
 func TestValidate_InvalidLogLevel(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -93,9 +120,6 @@ func TestValidate_InvalidLogLevel(t *testing.T) {
 		{"invalid level", "invalid"},
 		{"fatal not allowed", "fatal"},
 		{"trace not allowed", "trace"},
-		{"empty string", ""},
-		{"uppercase", "INFO"},
-		{"mixed case", "Debug"},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +136,92 @@ func TestValidate_InvalidLogLevel(t *testing.T) {
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "logLevel must be one of [debug, info, warn, error]")
 			assert.Contains(t, err.Error(), fmt.Sprintf("got '%s'", tt.logLevel))
+		})
+	}
+}
+
+func TestValidate_CaseInsensitiveStorageType(t *testing.T) {
+	tests := []struct {
+		name        string
+		storageType string
+		expected    string // normalized value
+	}{
+		{"uppercase MEMORY", "MEMORY", "memory"},
+		{"uppercase SQLITE", "SQLITE", "sqlite"},
+		{"mixed case Memory", "Memory", "memory"},
+		{"mixed case SqLiTe", "SqLiTe", "sqlite"},
+		{"empty string allowed", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: tt.storageType,
+				StoragePath: "/some/path", // Required for sqlite
+			}
+
+			err := settings.Validate()
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, settings.StorageType)
+		})
+	}
+}
+
+func TestValidate_InvalidStorageType(t *testing.T) {
+	tests := []struct {
+		name        string
+		storageType string
+	}{
+		{"postgresql not supported", "postgresql"},
+		{"redis not supported", "redis"},
+		{"mysql not supported", "mysql"},
+		{"invalid type", "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: tt.storageType,
+			}
+
+			err := settings.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "storageType must be one of [memory, sqlite]")
+		})
+	}
+}
+
+func TestValidate_HTTPPort(t *testing.T) {
+	tests := []struct {
+		name        string
+		port        int
+		shouldError bool
+	}{
+		{"valid port 8080", 8080, false},
+		{"valid port 80", 80, false},
+		{"valid port 443", 443, false},
+		{"valid port 3000", 3000, false},
+		{"valid port 65535", 65535, false},
+		{"valid port 0 (any)", 0, false},
+		{"negative port", -1, true},
+		{"port too high", 65536, true},
+		{"port way too high", 100000, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := Settings{
+				StorageType: "memory",
+				HTTPPort:    tt.port,
+			}
+
+			err := settings.Validate()
+			if tt.shouldError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "httpPort must be between 0 and 65535")
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }
@@ -252,14 +362,14 @@ func TestValidate_EdgeCases(t *testing.T) {
 		errorMsg    string
 	}{
 		{
-			name: "empty log level",
+			name: "empty log level is allowed",
 			settings: Settings{
 				StorageType: "memory",
 				LogLevel:    "",
 				HTTPPort:    8080,
 			},
-			shouldError: true,
-			errorMsg:    "logLevel must be one of [debug, info, warn, error], got ''",
+			shouldError: false,
+			errorMsg:    "",
 		},
 		{
 			name: "log level with extra spaces",

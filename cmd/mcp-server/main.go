@@ -107,6 +107,20 @@ func (s *Server) validateRequest(req *JSONRPCRequest) *JSONRPCResponse {
 		}
 	}
 
+	// Check for invalid method patterns
+	if len(req.Method) > 100 || strings.Contains(req.Method, "..") || strings.Contains(req.Method, "//") ||
+		strings.Contains(req.Method, "\x00") || strings.Contains(req.Method, "\n") || strings.Contains(req.Method, "\t") {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    fmt.Sprintf("Invalid method format: '%s'", req.Method),
+			},
+		}
+	}
+
 	return nil // Request is valid
 }
 
@@ -130,40 +144,6 @@ func isValidToolName(name string) bool {
 	return true
 }
 
-// isValidMethodName validates that a method name is properly formatted
-func isValidMethodName(method string) bool {
-	// Method must not be empty and should have reasonable length
-	if method == "" || len(method) > 100 {
-		return false
-	}
-	
-	// Method should only contain lowercase alphanumeric characters, forward slashes, and underscores
-	// Must be all lowercase to prevent case variations
-	// No dots, hyphens, or other special characters allowed
-	for _, r := range method {
-		if !((r >= 'a' && r <= 'z') || 
-			 (r >= '0' && r <= '9') || r == '/' || r == '_') {
-			return false
-		}
-	}
-	
-	// Check for path traversal attempts
-	if strings.Contains(method, "..") || strings.Contains(method, "//") {
-		return false
-	}
-	
-	// Method should not have extra path segments beyond expected pattern
-	if strings.Count(method, "/") > 1 {
-		return false
-	}
-	
-	// Only allow specific known methods
-	if method != "tools/list" && method != "tools/call" {
-		return false
-	}
-	
-	return true
-}
 
 // sanitizeError converts internal errors to user-safe messages
 func (s *Server) sanitizeError(err error) string {
@@ -207,37 +187,6 @@ func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRP
 		return validationErr
 	}
 
-	// Check for malformed method names (containing invalid characters, etc.)
-	// This is -32600 Invalid Request
-	for _, r := range req.Method {
-		if !((r >= 'a' && r <= 'z') || 
-			 (r >= 'A' && r <= 'Z') ||
-			 (r >= '0' && r <= '9') || r == '/' || r == '_' || r == '-' || r == '.' || r == '\\') {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error: &JSONRPCError{
-					Code:    -32600,
-					Message: "Invalid Request",
-					Data:    fmt.Sprintf("Invalid method format: '%s'", req.Method),
-				},
-			}
-		}
-	}
-	
-	// Check for other invalid patterns
-	if len(req.Method) > 100 || strings.Contains(req.Method, "..") || strings.Contains(req.Method, "//") ||
-		strings.Contains(req.Method, "\x00") || strings.Contains(req.Method, "\n") || strings.Contains(req.Method, "\t") {
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error: &JSONRPCError{
-				Code:    -32600,
-				Message: "Invalid Request",
-				Data:    fmt.Sprintf("Invalid method format: '%s'", req.Method),
-			},
-		}
-	}
 
 	switch req.Method {
 	case "tools/list":
@@ -266,6 +215,19 @@ func (s *Server) handleToolsList(req *JSONRPCRequest) *JSONRPCResponse {
 		}
 	}()
 
+	// Check if manager is nil
+	if s.manager == nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32603,
+				Message: "Internal error",
+				Data:    "Server not properly initialized",
+			},
+		}
+	}
+
 	tools := s.manager.HandleListTools()
 	
 	return &JSONRPCResponse{
@@ -284,6 +246,19 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 			log.Printf("Panic in handleToolsCall: %v", r)
 		}
 	}()
+
+	// Check if manager is nil
+	if s.manager == nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error: &JSONRPCError{
+				Code:    -32603,
+				Message: "Internal error",
+				Data:    "Server not properly initialized",
+			},
+		}
+	}
 
 	// Validate params exists
 	if req.Params == nil {

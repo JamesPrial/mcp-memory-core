@@ -348,10 +348,11 @@ func TestSqliteBackend_ErrorHandling(t *testing.T) {
 		sqliteBackend := backend.(*SqliteBackend)
 		ctx := context.Background()
 		
+		now := time.Now().UTC()
 		_, err := sqliteBackend.db.ExecContext(ctx, `
-			INSERT INTO entities (id, name, entity_type, observations, created_at)
-			VALUES (?, ?, ?, ?, ?)
-		`, "corrupted-id", "Test", "test", "invalid-json-{", time.Now().UTC())
+			INSERT INTO entities (id, name, entity_type, observations, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, "corrupted-id", "Test", "test", "invalid-json-{", now, now)
 		require.NoError(t, err)
 
 		// Operations should fail with unmarshal errors
@@ -375,12 +376,14 @@ func TestSqliteBackend_ErrorHandling(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Entity with empty observations should work
+		now := time.Now().UTC()
 		entities := []mcp.Entity{{
 			ID:           "empty-obs",
 			Name:         "Empty Observations",
 			EntityType:   mcp.EntityTypePerson,
 			Observations: []string{},
-			CreatedAt:    time.Now().UTC(),
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}}
 		
 		err = backend.CreateEntities(ctx, entities)
@@ -460,8 +463,9 @@ func TestSqliteBackend_DatabaseIntegrity(t *testing.T) {
 		defer tx.Rollback()
 		
 		// Insert data but don't commit
-		_, err = tx.Exec("INSERT INTO entities (id, name, entity_type, observations, created_at) VALUES (?, ?, ?, ?, ?)",
-			"lock-test", "Lock Test", "test", "[]", time.Now().UTC())
+		now := time.Now().UTC()
+		_, err = tx.Exec("INSERT INTO entities (id, name, entity_type, observations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+			"lock-test", "Lock Test", "test", "[]", now, now)
 		require.NoError(t, err)
 		
 		// Second connection
@@ -476,11 +480,13 @@ func TestSqliteBackend_DatabaseIntegrity(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		
+		now2 := time.Now().UTC()
 		entity := mcp.Entity{
 			ID:         "lock-test-2",
 			Name:       "Lock Test 2",
 			EntityType: mcp.EntityTypePerson,
-			CreatedAt:  time.Now().UTC(),
+			CreatedAt:  now2,
+			UpdatedAt:  now2,
 		}
 		
 		err = backend2.CreateEntities(ctx, []mcp.Entity{entity})
