@@ -239,7 +239,10 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 		if err := rows.Scan(&entityType, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan entity type count: %w", err)
 		}
-		stats[fmt.Sprintf("entities_%s", entityType)] = count
+		// Use "type_" prefix to match memory backend convention
+		if entityType != "" {
+			stats[fmt.Sprintf("type_%s", entityType)] = count
+		}
 	}
 
 	if err := rows.Err(); err != nil {
