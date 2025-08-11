@@ -436,7 +436,9 @@ func (al *AuditLogger) Close() error {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 
-	return al.file.Close()
+	err := al.file.Close()
+	al.file = nil  // Mark as closed to prevent double close
+	return err
 }
 
 // Sync forces a sync of the audit log to disk

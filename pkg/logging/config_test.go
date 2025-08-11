@@ -350,9 +350,13 @@ func TestConfig_Validate(t *testing.T) {
 				Format: LogFormatJSON,
 				Output: LogOutputStdout,
 				OTLP: OTLPConfig{
-					Enabled:  true,
-					Endpoint: "http://localhost:4317",
-					Timeout:  30, // seconds
+					Enabled:             true,
+					Endpoint:            "http://localhost:4317",
+					Timeout:             30, // seconds
+					BatchSize:           100,
+					BatchTimeout:        5,
+					QueueSize:           1000,
+					HealthCheckInterval: 30,
 				},
 			},
 			expectErr: false,
