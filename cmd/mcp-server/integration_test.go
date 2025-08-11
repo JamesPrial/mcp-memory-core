@@ -8,6 +8,7 @@ import (
 
 	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
+	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ sqlite:
 
 	// Test tools/list
 	ctx := context.Background()
-	req := &JSONRPCRequest{
+	req := &transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/list",
@@ -66,7 +67,7 @@ sqlite:
 	assert.Nil(t, resp.Error)
 
 	// Test creating entities
-	req = &JSONRPCRequest{
+	req = &transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      2,
 		Method:  "tools/call",
@@ -87,7 +88,7 @@ sqlite:
 	assert.Nil(t, resp.Error)
 
 	// Test statistics to verify entity was created
-	req = &JSONRPCRequest{
+	req = &transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      3,
 		Method:  "tools/call",
@@ -140,7 +141,7 @@ logLevel: "info"`
 
 	// Test basic operations
 	ctx := context.Background()
-	req := &JSONRPCRequest{
+	req := &transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/list",

@@ -9,15 +9,27 @@ import (
 )
 
 type Settings struct {
-	StorageType string         `yaml:"storageType"`
-	StoragePath string         `yaml:"storagePath"`
-	HTTPPort    int            `yaml:"httpPort"`
-	LogLevel    string         `yaml:"logLevel"`
-	Sqlite      SqliteSettings `yaml:"sqlite"`
+	StorageType   string           `yaml:"storageType"`
+	StoragePath   string           `yaml:"storagePath"`
+	HTTPPort      int              `yaml:"httpPort"`
+	LogLevel      string           `yaml:"logLevel"`
+	Sqlite        SqliteSettings   `yaml:"sqlite"`
+	TransportType string           `yaml:"transportType"`
+	Transport     TransportSettings `yaml:"transport"`
 }
 
 type SqliteSettings struct {
 	WALMode bool `yaml:"walMode"`
+}
+
+type TransportSettings struct {
+	Host              string `yaml:"host"`
+	Port              int    `yaml:"port"`
+	ReadTimeout       int    `yaml:"readTimeout"`
+	WriteTimeout      int    `yaml:"writeTimeout"`
+	MaxConnections    int    `yaml:"maxConnections"`
+	EnableCORS        bool   `yaml:"enableCors"`
+	SSEHeartbeatSecs  int    `yaml:"sseHeartbeatSecs"`
 }
 
 // Validate validates the configuration settings
@@ -52,6 +64,25 @@ func (s *Settings) Validate() error {
 	// Normalize the storage type
 	s.StorageType = normalizedStorageType
 
+	// Validate TransportType - must be one of [stdio, http, sse] (case-insensitive)
+	validTransportTypes := map[string]bool{
+		"stdio": true,
+		"http":  true,
+		"sse":   true,
+		"":      true, // Empty defaults to stdio
+	}
+	normalizedTransportType := strings.ToLower(s.TransportType)
+	if !validTransportTypes[normalizedTransportType] {
+		return fmt.Errorf("transportType must be one of [stdio, http, sse], got '%s'", s.TransportType)
+	}
+	// Normalize the transport type
+	s.TransportType = normalizedTransportType
+	
+	// Set default transport type if empty
+	if s.TransportType == "" {
+		s.TransportType = "stdio"
+	}
+
 	// Validate HTTPPort - must be a valid port number
 	if s.HTTPPort < 0 || s.HTTPPort > 65535 {
 		return fmt.Errorf("httpPort must be between 0 and 65535, got %d", s.HTTPPort)
@@ -60,6 +91,37 @@ func (s *Settings) Validate() error {
 	// Validate SQLite path - if storageType is sqlite, storagePath must not be empty
 	if normalizedStorageType == "sqlite" && strings.TrimSpace(s.StoragePath) == "" {
 		return fmt.Errorf("storagePath cannot be empty when storageType is sqlite")
+	}
+
+	// Validate transport settings for HTTP/SSE
+	if s.TransportType == "http" || s.TransportType == "sse" {
+		// Set default port if not specified
+		if s.Transport.Port == 0 {
+			s.Transport.Port = 8080
+		}
+		// Validate port range
+		if s.Transport.Port < 1 || s.Transport.Port > 65535 {
+			return fmt.Errorf("transport.port must be between 1 and 65535, got %d", s.Transport.Port)
+		}
+		// Set default host if not specified
+		if s.Transport.Host == "" {
+			s.Transport.Host = "localhost"
+		}
+		// Set default timeouts if not specified
+		if s.Transport.ReadTimeout == 0 {
+			s.Transport.ReadTimeout = 30
+		}
+		if s.Transport.WriteTimeout == 0 {
+			s.Transport.WriteTimeout = 30
+		}
+		// Set default SSE heartbeat if not specified
+		if s.Transport.SSEHeartbeatSecs == 0 {
+			s.Transport.SSEHeartbeatSecs = 30
+		}
+		// Set default max connections if not specified
+		if s.Transport.MaxConnections == 0 {
+			s.Transport.MaxConnections = 100
+		}
 	}
 
 	return nil
