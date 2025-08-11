@@ -38,7 +38,17 @@ func NewFactory(config *Config) (*Factory, error) {
 		loggers: make(map[string]*slog.Logger),
 	}
 	
-	// Initialize base handler
+	// Initialize sampler BEFORE handler (needed for handler wrapping)
+	if config.Sampling.Enabled {
+		f.sampler = NewSampler(config.Sampling)
+	}
+	
+	// Initialize masker BEFORE handler (needed for ReplaceAttr)
+	if config.Masking.Enabled {
+		f.masker = NewMasker(config.Masking)
+	}
+	
+	// Initialize base handler (uses masker and sampler)
 	if err := f.initializeHandler(); err != nil {
 		return nil, fmt.Errorf("failed to initialize handler: %w", err)
 	}
@@ -50,16 +60,6 @@ func NewFactory(config *Config) (*Factory, error) {
 			return nil, fmt.Errorf("failed to initialize audit logger: %w", err)
 		}
 		f.auditLogger = auditLogger
-	}
-	
-	// Initialize sampler if enabled
-	if config.Sampling.Enabled {
-		f.sampler = NewSampler(config.Sampling)
-	}
-	
-	// Initialize masker if enabled
-	if config.Masking.Enabled {
-		f.masker = NewMasker(config.Masking)
 	}
 	
 	// Initialize metrics collector if enabled
