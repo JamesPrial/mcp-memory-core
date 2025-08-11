@@ -54,15 +54,13 @@ func (sm *SessionManager) CreateSession(transport string) (*Session, error) {
 
 // GetSession retrieves a session by ID
 func (sm *SessionManager) GetSession(sessionID string) (*Session, bool) {
-	sm.mu.RLock()
-	session, exists := sm.sessions[sessionID]
-	sm.mu.RUnlock()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	
+	session, exists := sm.sessions[sessionID]
 	if exists {
-		// Update last activity
-		sm.mu.Lock()
+		// Update last activity atomically while holding the lock
 		session.LastActivity = time.Now().Unix()
-		sm.mu.Unlock()
 	}
 	
 	return session, exists

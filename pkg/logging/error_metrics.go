@@ -344,15 +344,26 @@ func hasPrefix(s string, prefixes ...string) bool {
 	return false
 }
 
-// Global metrics instance
-var globalErrorMetrics = NewErrorMetrics()
+// Global metrics instance with thread-safe initialization
+var (
+	globalErrorMetrics     *ErrorMetrics
+	globalErrorMetricsOnce sync.Once
+)
+
+// getGlobalErrorMetrics returns the global metrics instance, initializing it if necessary
+func getGlobalErrorMetrics() *ErrorMetrics {
+	globalErrorMetricsOnce.Do(func() {
+		globalErrorMetrics = NewErrorMetrics()
+	})
+	return globalErrorMetrics
+}
 
 // RecordError records an error using the global metrics
 func RecordError(ctx context.Context, errorCode, operation, component string) {
-	globalErrorMetrics.RecordError(ctx, errorCode, operation, component)
+	getGlobalErrorMetrics().RecordError(ctx, errorCode, operation, component)
 }
 
 // GetGlobalMetrics returns the global metrics instance
 func GetGlobalMetrics() *ErrorMetrics {
-	return globalErrorMetrics
+	return getGlobalErrorMetrics()
 }

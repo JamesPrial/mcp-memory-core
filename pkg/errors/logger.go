@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
+	"sync"
 	
 	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 )
@@ -360,35 +361,53 @@ func (l *Logger) getLogLevel(code ErrorCode) slog.Level {
 	}
 }
 
-// Default logger instance
-var defaultLogger = NewLogger("errors")
+// Default logger instance with thread-safe initialization
+var (
+	defaultLogger *Logger
+	defaultLoggerOnce sync.Once
+	defaultLoggerMu   sync.RWMutex
+)
 
-// SetDefaultLogger sets the default error logger
+// getDefaultLogger returns the default logger, initializing it if necessary
+func getDefaultLogger() *Logger {
+	defaultLoggerOnce.Do(func() {
+		defaultLogger = NewLogger("errors")
+	})
+	defaultLoggerMu.RLock()
+	defer defaultLoggerMu.RUnlock()
+	return defaultLogger
+}
+
+// SetDefaultLogger sets the default error logger in a thread-safe manner
 func SetDefaultLogger(logger *slog.Logger) {
+	defaultLoggerMu.Lock()
+	defer defaultLoggerMu.Unlock()
 	defaultLogger = NewLoggerWithSlog(logger)
 }
 
 // SetDefaultLoggerComponent sets the default error logger for a specific component
 func SetDefaultLoggerComponent(component string) {
+	defaultLoggerMu.Lock()
+	defer defaultLoggerMu.Unlock()
 	defaultLogger = NewLogger(component)
 }
 
 // LogError logs an error using the default logger
 func LogError(ctx context.Context, err error, operation string) error {
-	return defaultLogger.LogError(ctx, err, operation)
+	return getDefaultLogger().LogError(ctx, err, operation)
 }
 
 // LogAndWrap logs and wraps an error using the default logger
 func LogAndWrap(ctx context.Context, err error, code ErrorCode, message, operation string) *AppError {
-	return defaultLogger.LogAndWrap(ctx, err, code, message, operation)
+	return getDefaultLogger().LogAndWrap(ctx, err, code, message, operation)
 }
 
 // LogAndWrapf logs and wraps an error with formatted message using the default logger
 func LogAndWrapf(ctx context.Context, err error, code ErrorCode, operation, format string, args ...interface{}) *AppError {
-	return defaultLogger.LogAndWrapf(ctx, err, code, operation, format, args...)
+	return getDefaultLogger().LogAndWrapf(ctx, err, code, operation, format, args...)
 }
 
 // LogPanic logs a panic using the default logger
 func LogPanic(ctx context.Context, recovered interface{}, operation string) error {
-	return defaultLogger.LogPanic(ctx, recovered, operation)
+	return getDefaultLogger().LogPanic(ctx, recovered, operation)
 }

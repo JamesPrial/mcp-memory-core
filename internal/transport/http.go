@@ -39,7 +39,9 @@ func NewHTTPTransport(cfg *config.TransportSettings) *HTTPTransport {
 
 // Start begins listening for HTTP requests
 func (t *HTTPTransport) Start(ctx context.Context, handler RequestHandler) error {
+	t.mu.Lock()
 	t.handler = handler
+	t.mu.Unlock()
 	
 	// Log transport startup
 	t.logger.InfoContext(ctx, "HTTP transport starting",
@@ -67,12 +69,15 @@ func (t *HTTPTransport) Start(ctx context.Context, handler RequestHandler) error
 	
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", t.config.Host, t.config.Port)
+	t.mu.Lock()
 	t.server = &http.Server{
 		Addr:         addr,
 		Handler:      httpHandler,
 		ReadTimeout:  time.Duration(t.config.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(t.config.WriteTimeout) * time.Second,
 	}
+	server := t.server
+	t.mu.Unlock()
 	
 	t.logger.InfoContext(ctx, "HTTP server starting",
 		slog.String("address", addr),
@@ -81,7 +86,7 @@ func (t *HTTPTransport) Start(ctx context.Context, handler RequestHandler) error
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		if err := t.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			t.logger.ErrorContext(ctx, "HTTP server error",
 				slog.String("error", err.Error()),
 			)
@@ -103,9 +108,13 @@ func (t *HTTPTransport) Start(ctx context.Context, handler RequestHandler) error
 func (t *HTTPTransport) Stop(ctx context.Context) error {
 	t.logger.InfoContext(ctx, "HTTP transport stopping")
 	
-	if t.server != nil {
+	t.mu.RLock()
+	server := t.server
+	t.mu.RUnlock()
+	
+	if server != nil {
 		t.sessionManager.Stop()
-		err := t.server.Shutdown(ctx)
+		err := server.Shutdown(ctx)
 		if err != nil {
 			t.logger.ErrorContext(ctx, "Error during HTTP server shutdown",
 				slog.String("error", err.Error()),
@@ -232,7 +241,10 @@ func (t *HTTPTransport) handleRPC(w http.ResponseWriter, r *http.Request) {
 	)
 	
 	startTime := time.Now()
-	resp := t.handler(ctx, &req)
+	t.mu.RLock()
+	handler := t.handler
+	t.mu.RUnlock()
+	resp := handler(ctx, &req)
 	duration := time.Since(startTime)
 	
 	// Log response
