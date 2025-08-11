@@ -1,0 +1,26 @@
+# SSE Transport Configuration Example
+# This configuration uses Server-Sent Events for real-time bidirectional communication
+
+# Storage configuration
+storageType: sqlite     # Options: memory, sqlite
+storagePath: memory.db  # Path for sqlite database
+
+# SQLite-specific settings
+sqlite:
+  walMode: true  # Enable Write-Ahead Logging for better concurrency
+
+# Transport configuration
+transportType: sse  # Use SSE transport
+
+# SSE-specific settings
+transport:
+  host: 0.0.0.0           # Bind to all interfaces
+  port: 8080              # Port to listen on
+  readTimeout: 30         # Read timeout in seconds
+  writeTimeout: 30        # Write timeout in seconds
+  maxConnections: 100     # Maximum concurrent connections
+  enableCors: true        # Enable CORS headers for browser clients
+  sseHeartbeatSecs: 30    # Heartbeat interval in seconds (keeps connections alive)
+
+# Logging
+logLevel: debug  # Options: debug, info, warn, error

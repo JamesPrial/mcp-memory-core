@@ -1,0 +1,21 @@
+# HTTP Transport Configuration Example
+# This configuration uses HTTP transport for synchronous request/response communication
+
+# Storage configuration
+storageType: memory  # Options: memory, sqlite
+storagePath: ""      # Path for sqlite database (if using sqlite)
+
+# Transport configuration
+transportType: http  # Use HTTP transport
+
+# HTTP-specific settings
+transport:
+  host: localhost      # Host to bind to
+  port: 8080          # Port to listen on
+  readTimeout: 30     # Read timeout in seconds
+  writeTimeout: 30    # Write timeout in seconds
+  maxConnections: 100 # Maximum concurrent connections
+  enableCors: true    # Enable CORS headers for browser clients
+
+# Logging
+logLevel: info  # Options: debug, info, warn, error

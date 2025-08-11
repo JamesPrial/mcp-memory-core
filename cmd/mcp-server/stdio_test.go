@@ -6,13 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
+	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,13 +43,13 @@ func (ts *TestableServer) TestableRun(ctx context.Context) error {
 		}
 
 		// Parse JSON-RPC request
-		var req JSONRPCRequest
+		var req transport.JSONRPCRequest
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			// Send parse error response
-			resp := &JSONRPCResponse{
+			resp := &transport.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      nil,
-				Error: &JSONRPCError{
+				Error: &transport.JSONRPCError{
 					Code:    -32700,
 					Message: "Parse error",
 				},
@@ -72,7 +71,7 @@ func (ts *TestableServer) TestableRun(ctx context.Context) error {
 }
 
 // testableSendResponse sends response to injected stdout
-func (ts *TestableServer) testableSendResponse(resp *JSONRPCResponse) {
+func (ts *TestableServer) testableSendResponse(resp *transport.JSONRPCResponse) {
 	respBytes, err := json.Marshal(resp)
 	if err != nil {
 		return
@@ -246,15 +245,17 @@ func TestServerTestableRunEOF(t *testing.T) {
 }
 
 // TestSendResponseDirect tests the original sendResponse method
+// NOTE: sendResponse is now handled by the transport layer
+/*
 func TestSendResponseDirect(t *testing.T) {
 	tests := []struct {
 		name     string
-		response *JSONRPCResponse
+		response *transport.JSONRPCResponse
 		expected string
 	}{
 		{
 			name: "successful response",
-			response: &JSONRPCResponse{
+			response: &transport.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      1,
 				Result:  map[string]interface{}{"test": "value"},
@@ -263,10 +264,10 @@ func TestSendResponseDirect(t *testing.T) {
 		},
 		{
 			name: "error response",
-			response: &JSONRPCResponse{
+			response: &transport.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      2,
-				Error: &JSONRPCError{
+				Error: &transport.JSONRPCError{
 					Code:    -32601,
 					Message: "Method not found",
 				},
@@ -275,10 +276,10 @@ func TestSendResponseDirect(t *testing.T) {
 		},
 		{
 			name: "response with null ID",
-			response: &JSONRPCResponse{
+			response: &transport.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      nil,
-				Error: &JSONRPCError{
+				Error: &transport.JSONRPCError{
 					Code:    -32700,
 					Message: "Parse error",
 				},
@@ -324,13 +325,16 @@ func TestSendResponseDirect(t *testing.T) {
 		})
 	}
 }
+*/
 
 // TestSendResponseWithMarshalError tests sendResponse with unmarshalable data
+// NOTE: sendResponse is now handled by the transport layer
+/*
 func TestSendResponseWithMarshalError(t *testing.T) {
 	server := createTestServer(t)
 
 	// Create response with unmarshalable data (channels cannot be marshaled)
-	response := &JSONRPCResponse{
+	response := &transport.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      1,
 		Result:  make(chan int), // This will cause json.Marshal to fail
@@ -365,6 +369,7 @@ func TestSendResponseWithMarshalError(t *testing.T) {
 
 	r.Close()
 }
+*/
 
 // TestHandleRequestEdgeCases tests additional edge cases for HandleRequest
 func TestHandleRequestEdgeCases(t *testing.T) {
@@ -373,12 +378,12 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		request  *JSONRPCRequest
-		checkFn  func(t *testing.T, resp *JSONRPCResponse)
+		request  *transport.JSONRPCRequest
+		checkFn  func(t *testing.T, resp *transport.JSONRPCResponse)
 	}{
 		{
 			name: "tools/call with valid arguments",
-			request: &JSONRPCRequest{
+			request: &transport.JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      1,
 				Method:  "tools/call",
@@ -387,7 +392,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 					"arguments": map[string]interface{}{},
 				},
 			},
-			checkFn: func(t *testing.T, resp *JSONRPCResponse) {
+			checkFn: func(t *testing.T, resp *transport.JSONRPCResponse) {
 				assert.Equal(t, "2.0", resp.JSONRPC)
 				assert.Equal(t, 1, resp.ID)
 				assert.NotNil(t, resp.Result)
@@ -396,7 +401,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 		},
 		{
 			name: "tools/call with non-map arguments",
-			request: &JSONRPCRequest{
+			request: &transport.JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      2,
 				Method:  "tools/call",
@@ -405,7 +410,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 					"arguments": "not-a-map",
 				},
 			},
-			checkFn: func(t *testing.T, resp *JSONRPCResponse) {
+			checkFn: func(t *testing.T, resp *transport.JSONRPCResponse) {
 				assert.Equal(t, "2.0", resp.JSONRPC)
 				assert.Equal(t, 2, resp.ID)
 				assert.Nil(t, resp.Result)
@@ -415,7 +420,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 		},
 		{
 			name: "tools/call with invalid tool name",
-			request: &JSONRPCRequest{
+			request: &transport.JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      3,
 				Method:  "tools/call",
@@ -424,7 +429,7 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 					"arguments": map[string]interface{}{},
 				},
 			},
-			checkFn: func(t *testing.T, resp *JSONRPCResponse) {
+			checkFn: func(t *testing.T, resp *transport.JSONRPCResponse) {
 				assert.Equal(t, "2.0", resp.JSONRPC)
 				assert.Equal(t, 3, resp.ID)
 				assert.Nil(t, resp.Result)
@@ -444,8 +449,8 @@ func TestHandleRequestEdgeCases(t *testing.T) {
 
 // TestJSONRPCStructures tests JSON marshaling/unmarshaling of structures
 func TestJSONRPCStructures(t *testing.T) {
-	t.Run("JSONRPCRequest marshaling", func(t *testing.T) {
-		req := &JSONRPCRequest{
+	t.Run("transport.JSONRPCRequest marshaling", func(t *testing.T) {
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      "test-id",
 			Method:  "test/method",
@@ -457,7 +462,7 @@ func TestJSONRPCStructures(t *testing.T) {
 		data, err := json.Marshal(req)
 		require.NoError(t, err)
 
-		var unmarshaled JSONRPCRequest
+		var unmarshaled transport.JSONRPCRequest
 		err = json.Unmarshal(data, &unmarshaled)
 		require.NoError(t, err)
 
@@ -467,12 +472,12 @@ func TestJSONRPCStructures(t *testing.T) {
 		assert.Equal(t, req.Params, unmarshaled.Params)
 	})
 
-	t.Run("JSONRPCResponse marshaling", func(t *testing.T) {
-		resp := &JSONRPCResponse{
+	t.Run("transport.JSONRPCResponse marshaling", func(t *testing.T) {
+		resp := &transport.JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      123,
 			Result:  map[string]interface{}{"result": "data"},
-			Error: &JSONRPCError{
+			Error: &transport.JSONRPCError{
 				Code:    -32601,
 				Message: "Method not found",
 				Data:    "additional info",
@@ -482,7 +487,7 @@ func TestJSONRPCStructures(t *testing.T) {
 		data, err := json.Marshal(resp)
 		require.NoError(t, err)
 
-		var unmarshaled JSONRPCResponse
+		var unmarshaled transport.JSONRPCResponse
 		err = json.Unmarshal(data, &unmarshaled)
 		require.NoError(t, err)
 
@@ -508,6 +513,8 @@ func TestNewServer(t *testing.T) {
 }
 
 // TestOriginalRunMethod tests the original Run method with direct stdin manipulation
+// NOTE: Run method has been removed; functionality is now in the transport layer
+/*
 func TestOriginalRunMethod(t *testing.T) {
 	server := createTestServer(t)
 	
@@ -561,6 +568,7 @@ func TestOriginalRunMethod(t *testing.T) {
 		cancel()
 	}
 }
+*/
 
 // TestMoreEdgeCases tests additional edge cases to improve coverage
 func TestMoreEdgeCases(t *testing.T) {
@@ -568,7 +576,7 @@ func TestMoreEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("tools/call with nil arguments", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -584,7 +592,7 @@ func TestMoreEdgeCases(t *testing.T) {
 	})
 
 	t.Run("tools/call without arguments field", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -598,7 +606,7 @@ func TestMoreEdgeCases(t *testing.T) {
 	})
 
 	t.Run("handleToolsList coverage", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      "string-id",
 			Method:  "tools/list",
@@ -611,7 +619,7 @@ func TestMoreEdgeCases(t *testing.T) {
 	})
 
 	t.Run("handleToolsCall coverage - direct call", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      42,
 			Method:  "tools/call",
@@ -630,8 +638,8 @@ func TestMoreEdgeCases(t *testing.T) {
 
 // TestErrorResponse tests creating error responses  
 func TestErrorResponse(t *testing.T) {
-	// Test creating JSONRPCError
-	err := &JSONRPCError{
+	// Test creating transport.JSONRPCError
+	err := &transport.JSONRPCError{
 		Code:    -32603,
 		Message: "Internal error",
 		Data:    "additional data",
@@ -642,7 +650,7 @@ func TestErrorResponse(t *testing.T) {
 	assert.Equal(t, "additional data", err.Data)
 
 	// Test creating full error response
-	resp := &JSONRPCResponse{
+	resp := &transport.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      nil,
 		Error:   err,
@@ -655,6 +663,8 @@ func TestErrorResponse(t *testing.T) {
 }
 
 // TestRunMethodScannerError tests the scanner error path
+// NOTE: Run method has been removed; functionality is now in the transport layer
+/*
 func TestRunMethodScannerError(t *testing.T) {
 	server := createTestServer(t)
 	
@@ -686,3 +696,4 @@ func TestRunMethodScannerError(t *testing.T) {
 	// Should return nil on EOF (not an error)
 	assert.NoError(t, err)
 }
+*/

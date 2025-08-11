@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
+	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,7 +139,7 @@ logLevel: "info"`
 
 	// Test that server can handle a basic request
 	ctx := context.Background()
-	req := &JSONRPCRequest{
+	req := &transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "tools/list",
@@ -149,41 +149,33 @@ logLevel: "info"`
 	assert.Nil(t, resp.Error)
 }
 
-// TestServerRunWithTimeout tests running the server with a timeout
-func TestServerRunWithTimeout(t *testing.T) {
+// TestServerWithTransport tests the server with transport layer
+func TestServerWithTransport(t *testing.T) {
 	server := createTestServer(t)
 
-	// Create a context with timeout to prevent infinite running
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	// Create stdio transport
+	trans := transport.NewStdioTransport()
+	require.NotNil(t, trans)
+	assert.Equal(t, "stdio", trans.Name())
 
-	// Create pipes but don't send any data
-	stdinReader, stdinWriter, err := os.Pipe()
-	require.NoError(t, err)
-	defer stdinReader.Close()
-	defer stdinWriter.Close()
-
-	originalStdin := os.Stdin
-	os.Stdin = stdinReader
-	defer func() {
-		os.Stdin = originalStdin
-	}()
-
-	// Run should eventually return when context is cancelled or stdin is closed
-	done := make(chan error, 1)
-	go func() {
-		done <- server.Run(ctx)
-	}()
-
-	// Close stdin to trigger EOF
-	stdinWriter.Close()
-
-	select {
-	case err := <-done:
-		assert.NoError(t, err, "Run should complete without error")
-	case <-time.After(1 * time.Second):
-		t.Error("Server Run() did not complete in time")
+	// Test that server can handle requests through transport
+	ctx := context.Background()
+	
+	// Test request handling
+	req := &transport.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "tools/list",
 	}
+
+	resp := server.HandleRequest(ctx, req)
+	assert.NotNil(t, resp)
+	assert.Nil(t, resp.Error)
+	assert.NotNil(t, resp.Result)
+
+	// Test stopping transport
+	err := trans.Stop(ctx)
+	assert.NoError(t, err)
 }
 
 // Helper functions to safely test parts of main() logic without causing exits

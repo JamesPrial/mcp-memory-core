@@ -9,6 +9,7 @@ import (
 
 	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
+	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -53,7 +54,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 
 	for _, method := range invalidRequestMethods {
 		t.Run(fmt.Sprintf("InvalidRequest_%d_chars", len(method)), func(t *testing.T) {
-			req := &JSONRPCRequest{
+			req := &transport.JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      1,
 				Method:  method,
@@ -71,7 +72,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 
 	for _, method := range methodNotFoundMethods {
 		t.Run(fmt.Sprintf("MethodNotFound_%d_chars", len(method)), func(t *testing.T) {
-			req := &JSONRPCRequest{
+			req := &transport.JSONRPCRequest{
 				JSONRPC: "2.0",
 				ID:      1,
 				Method:  method,
@@ -124,7 +125,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidRequestStructures(t *testing.T) {
 
 		for i, id := range idTypes {
 			t.Run(fmt.Sprintf("IDType_%d", i), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      id,
 					Method:  "tools/list",
@@ -163,7 +164,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidRequestStructures(t *testing.T) {
 
 		for _, version := range versions {
 			t.Run(fmt.Sprintf("Version_%s", version), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: version,
 					ID:      1,
 					Method:  "tools/list",
@@ -184,7 +185,7 @@ func TestServer_EdgeCases_HandleToolsList(t *testing.T) {
 	server := NewServer(manager)
 
 	t.Run("ValidRequest", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/list",
@@ -203,7 +204,7 @@ func TestServer_EdgeCases_HandleToolsList(t *testing.T) {
 
 	t.Run("WithExtraParams", func(t *testing.T) {
 		// tools/list should ignore any parameters
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      "test_id",
 			Method:  "tools/list",
@@ -222,7 +223,7 @@ func TestServer_EdgeCases_HandleToolsList(t *testing.T) {
 	})
 
 	t.Run("NilParams", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      nil,
 			Method:  "tools/list",
@@ -244,7 +245,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("MissingParams", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -261,7 +262,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	})
 
 	t.Run("NilParams", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -278,7 +279,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	})
 
 	t.Run("EmptyParams", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -306,7 +307,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 
 		for i, name := range invalidNames {
 			t.Run(fmt.Sprintf("InvalidName_%d", i), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      1,
 					Method:  "tools/call",
@@ -344,7 +345,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 
 		for _, toolName := range invalidParamsTools {
 			t.Run(fmt.Sprintf("InvalidParams_%d_chars", len(toolName)), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      1,
 					Method:  "tools/call",
@@ -365,7 +366,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 
 		for _, toolName := range unknownTools {
 			t.Run(fmt.Sprintf("UnknownTool_%d_chars", len(toolName)), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      1,
 					Method:  "tools/call",
@@ -398,7 +399,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 
 		for i, args := range malformedArgs {
 			t.Run(fmt.Sprintf("MalformedArgs_%d", i), func(t *testing.T) {
-				req := &JSONRPCRequest{
+				req := &transport.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      1,
 					Method:  "tools/call",
@@ -427,7 +428,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 
 	t.Run("ValidArgumentsIgnoredType", func(t *testing.T) {
 		// When arguments is not a map[string]interface{}, it should be ignored
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -450,7 +451,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	t.Run("ExtraParamsIgnored", func(t *testing.T) {
 		mockStorage.On("CreateEntities", mock.Anything, mock.AnythingOfType("[]mcp.Entity")).Return(nil)
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -484,7 +485,7 @@ func TestServer_EdgeCases_JSONSerialization(t *testing.T) {
 
 	t.Run("ResponseSerialization", func(t *testing.T) {
 		// Test that all response types can be serialized to JSON
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      map[string]interface{}{"complex": "id"}, // Complex ID
 			Method:  "tools/list",
@@ -498,14 +499,14 @@ func TestServer_EdgeCases_JSONSerialization(t *testing.T) {
 		assert.NotEmpty(t, jsonBytes)
 		
 		// Should be able to unmarshal back
-		var unmarshaled JSONRPCResponse
+		var unmarshaled transport.JSONRPCResponse
 		err = json.Unmarshal(jsonBytes, &unmarshaled)
 		assert.NoError(t, err)
 		assert.Equal(t, resp.JSONRPC, unmarshaled.JSONRPC)
 	})
 
 	t.Run("ErrorResponseSerialization", func(t *testing.T) {
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      "test",
 			Method:  "invalid_method",
@@ -518,7 +519,7 @@ func TestServer_EdgeCases_JSONSerialization(t *testing.T) {
 		assert.NotEmpty(t, jsonBytes)
 		
 		// Verify error structure
-		var unmarshaled JSONRPCResponse
+		var unmarshaled transport.JSONRPCResponse
 		err = json.Unmarshal(jsonBytes, &unmarshaled)
 		assert.NoError(t, err)
 		assert.NotNil(t, unmarshaled.Error)
@@ -537,7 +538,7 @@ func TestServer_EdgeCases_ContextHandling(t *testing.T) {
 		
 		mockStorage.On("SearchEntities", mock.Anything, "test").Return([]mcp.Entity{}, nil)
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -564,7 +565,7 @@ func TestServer_EdgeCases_ContextHandling(t *testing.T) {
 			}
 		}()
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/list",
@@ -587,7 +588,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 		// Test when manager returns an error
 		mockStorage.On("SearchEntities", mock.Anything, "error_test").Return(nil, fmt.Errorf("search failed"))
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -614,7 +615,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 		mockStorage.On("SearchEntities", mock.Anything, "sensitive").Return(nil, 
 			fmt.Errorf("database connection failed: password=secret123"))
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -653,7 +654,7 @@ func TestServer_EdgeCases_BoundaryConditions(t *testing.T) {
 		
 		mockStorage.On("CreateEntities", mock.Anything, mock.AnythingOfType("[]mcp.Entity")).Return(nil)
 
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -687,7 +688,7 @@ func TestServer_EdgeCases_BoundaryConditions(t *testing.T) {
 		}
 		current["final"] = "value"
 		
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
@@ -713,7 +714,7 @@ func TestNewServer_EdgeCases(t *testing.T) {
 		
 		// Using the server with nil manager should return error responses
 		ctx := context.Background()
-		req := &JSONRPCRequest{
+		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/list",
