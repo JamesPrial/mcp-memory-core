@@ -588,7 +588,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 
 	t.Run("ManagerError", func(t *testing.T) {
 		// Test when manager returns an error
-		mockStorage.On("SearchEntities", mock.Anything, "error_test").Return(nil, fmt.Errorf("search failed"))
+		mockStorage.On("SearchEntities", mock.Anything, "error_test").Return(nil, fmt.Errorf("Failed to search entities"))
 
 		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -609,7 +609,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, -32603, resp.Error.Code)
 		assert.Contains(t, resp.Error.Message, "Internal error")
-		assert.Contains(t, resp.Error.Message, "search failed")
+		assert.Contains(t, resp.Error.Message, "Failed to search entities")
 	})
 
 	t.Run("ErrorMessageSanitization", func(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
 	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 )
 
@@ -140,7 +141,12 @@ func (s *Server) sanitizeError(err error) string {
 		return "Unknown error occurred"
 	}
 
-	errMsg := strings.ToLower(err.Error())
+	return s.sanitizeErrorString(err.Error())
+}
+
+// sanitizeErrorString sanitizes an error message string
+func (s *Server) sanitizeErrorString(errMsg string) string {
+	errMsg = strings.ToLower(errMsg)
 	
 	// Replace internal error patterns with user-friendly messages
 	if strings.Contains(errMsg, "database") || strings.Contains(errMsg, "sql") {
@@ -377,8 +383,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 	// Call the tool
 	result, err := s.manager.HandleCallTool(ctx, toolName, arguments)
 	if err != nil {
-		// Check if error needs sanitization
+		// Build full error message including wrapped errors
 		errMsg := err.Error()
+		
+		// Check if it's an AppError with an internal error
+		if appErr, ok := err.(*errors.AppError); ok && appErr.Internal != nil {
+			// Include the wrapped error in the check
+			errMsg = fmt.Sprintf("%s: %v", errMsg, appErr.Internal)
+		}
+		
+		// Check if error needs sanitization - check both the error message and any wrapped errors
 		needsSanitization := strings.Contains(strings.ToLower(errMsg), "password") ||
 			strings.Contains(strings.ToLower(errMsg), "secret") ||
 			strings.Contains(strings.ToLower(errMsg), "token") ||
@@ -387,7 +401,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 		
 		var message string
 		if needsSanitization {
-			message = s.sanitizeError(err)
+			// Pass the full error string for sanitization
+			message = s.sanitizeErrorString(errMsg)
 		} else {
 			message = fmt.Sprintf("Internal error: %s", err.Error())
 		}
@@ -414,6 +429,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 // convertLegacyLogConfig converts old LogLevel configuration to new logging config
 func convertLegacyLogConfig(cfg *config.Settings) *logging.Config {
 	logConfig := logging.DefaultConfig()
+	
+	// IMPORTANT: For stdio transport, logs MUST go to stderr to avoid mixing with JSON-RPC responses
+	if cfg.TransportType == "stdio" {
+		logConfig.Output = logging.LogOutputStderr
+	}
 	
 	// Convert legacy LogLevel if present and no new logging config
 	if cfg.LogLevel != "" && cfg.Logging == nil {
@@ -445,7 +465,12 @@ func convertLegacyLogConfig(cfg *config.Settings) *logging.Config {
 		if cfg.Logging.Output != "" {
 			switch cfg.Logging.Output {
 			case "stdout":
-				logConfig.Output = logging.LogOutputStdout
+				// Override to stderr for stdio transport to avoid mixing logs with JSON-RPC
+				if cfg.TransportType == "stdio" {
+					logConfig.Output = logging.LogOutputStderr
+				} else {
+					logConfig.Output = logging.LogOutputStdout
+				}
 			case "stderr":
 				logConfig.Output = logging.LogOutputStderr
 			case "file":
