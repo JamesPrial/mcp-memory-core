@@ -89,6 +89,8 @@ func (f *Factory) initializeHandler() error {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
 		writer = file
+	case LogOutputDiscard:
+		writer = io.Discard
 	default:
 		writer = os.Stdout
 	}

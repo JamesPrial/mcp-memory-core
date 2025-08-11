@@ -176,7 +176,7 @@ func TestNewFactory(t *testing.T) {
 }
 
 func TestFactory_GetLogger(t *testing.T) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		t.Fatalf("Failed to create factory: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestFactory_GetLoggerWithComponentLevels(t *testing.T) {
 }
 
 func TestFactory_WithContext(t *testing.T) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		t.Fatalf("Failed to create factory: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestFactory_GetComponents(t *testing.T) {
 }
 
 func TestFactory_UpdateLevel(t *testing.T) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		t.Fatalf("Failed to create factory: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestFactory_Close(t *testing.T) {
 
 func TestGlobalFunctions(t *testing.T) {
 	// Test initialization
-	config := DefaultConfig()
+	config := TestConfig()
 	err := Initialize(config)
 	if err != nil {
 		t.Errorf("Expected Initialize to succeed but got error: %v", err)
@@ -434,7 +434,7 @@ func TestGlobalFunctions(t *testing.T) {
 	}
 
 	// Test re-initialization
-	newConfig := DevelopmentConfig()
+	newConfig := TestConfig()
 	err = Initialize(newConfig)
 	if err != nil {
 		t.Errorf("Expected re-initialization to succeed but got error: %v", err)
@@ -490,7 +490,7 @@ func TestGlobalFunctionsWithoutInit(t *testing.T) {
 }
 
 func TestFactory_ConcurrentAccess(t *testing.T) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		t.Fatalf("Failed to create factory: %v", err)
 	}
@@ -537,10 +537,8 @@ func TestFactory_OutputFormats(t *testing.T) {
 		format LogFormat
 		output LogOutput
 	}{
-		{"JSON stdout", LogFormatJSON, LogOutputStdout},
-		{"JSON stderr", LogFormatJSON, LogOutputStderr},
-		{"Text stdout", LogFormatText, LogOutputStdout},
-		{"Text stderr", LogFormatText, LogOutputStderr},
+		{"JSON discard", LogFormatJSON, LogOutputDiscard},
+		{"Text discard", LogFormatText, LogOutputDiscard},
 	}
 
 	for _, tt := range tests {
@@ -620,7 +618,7 @@ func TestFactory_AsyncLogging(t *testing.T) {
 	config := &Config{
 		Level:        LogLevelInfo,
 		Format:       LogFormatJSON,
-		Output:       LogOutputStdout,
+		Output:       LogOutputDiscard,
 		AsyncLogging: true,
 		BufferSize:   1024,
 	}
@@ -644,7 +642,7 @@ func TestFactory_AsyncLogging(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkFactory_GetLogger(b *testing.B) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		b.Fatalf("Failed to create factory: %v", err)
 	}
@@ -657,7 +655,7 @@ func BenchmarkFactory_GetLogger(b *testing.B) {
 }
 
 func BenchmarkFactory_GetLoggerNew(b *testing.B) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		b.Fatalf("Failed to create factory: %v", err)
 	}
@@ -671,7 +669,7 @@ func BenchmarkFactory_GetLoggerNew(b *testing.B) {
 }
 
 func BenchmarkFactory_LogWithContext(b *testing.B) {
-	factory, err := NewFactory(DefaultConfig())
+	factory, err := NewFactory(TestConfig())
 	if err != nil {
 		b.Fatalf("Failed to create factory: %v", err)
 	}
@@ -688,7 +686,7 @@ func BenchmarkFactory_LogWithContext(b *testing.B) {
 }
 
 func BenchmarkGlobalLogger(b *testing.B) {
-	err := Initialize(DefaultConfig())
+	err := Initialize(TestConfig())
 	if err != nil {
 		b.Fatalf("Failed to initialize global factory: %v", err)
 	}

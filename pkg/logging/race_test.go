@@ -57,7 +57,7 @@ func TestGlobalErrorMetricsRace(t *testing.T) {
 // TestGlobalFactoryRace tests concurrent access to global factory
 func TestGlobalFactoryRace(t *testing.T) {
 	// Initialize with a test config
-	config := DefaultConfig()
+	config := TestConfig()
 	if err := Initialize(config); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
 	}

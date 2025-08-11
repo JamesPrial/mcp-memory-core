@@ -19,9 +19,10 @@ const (
 type LogOutput string
 
 const (
-	LogOutputStdout LogOutput = "stdout"
-	LogOutputStderr LogOutput = "stderr"
-	LogOutputFile   LogOutput = "file"
+	LogOutputStdout  LogOutput = "stdout"
+	LogOutputStderr  LogOutput = "stderr"
+	LogOutputFile    LogOutput = "file"
+	LogOutputDiscard LogOutput = "discard" // For testing - discards all output
 )
 
 // LogLevel represents the logging level
@@ -262,6 +263,16 @@ func ProductionConfig() *Config {
 	return config
 }
 
+// TestConfig returns a configuration suitable for testing
+// It uses discard output to avoid polluting test output
+func TestConfig() *Config {
+	config := DefaultConfig()
+	config.Level = LogLevelError // Only log errors in tests
+	config.Output = LogOutputDiscard // Discard all output
+	config.AsyncLogging = false // Disable async for predictable test behavior
+	return config
+}
+
 // Validate validates the logging configuration
 func (c *Config) Validate() error {
 	// Validate log level
@@ -293,9 +304,10 @@ func (c *Config) Validate() error {
 	
 	// Validate output
 	validOutputs := map[LogOutput]bool{
-		LogOutputStdout: true,
-		LogOutputStderr: true,
-		LogOutputFile:   true,
+		LogOutputStdout:  true,
+		LogOutputStderr:  true,
+		LogOutputFile:    true,
+		LogOutputDiscard: true,
 	}
 	if !validOutputs[c.Output] {
 		return fmt.Errorf("invalid log output: %s", c.Output)
