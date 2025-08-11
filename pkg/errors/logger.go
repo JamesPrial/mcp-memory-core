@@ -6,19 +6,39 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
+	
+	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 )
 
 // Logger provides centralized error logging
 type Logger struct {
-	logger *slog.Logger
+	logger       *slog.Logger
+	metrics      *logging.ErrorMetrics
+	auditLogger  *logging.AuditLogger
+	useGlobal    bool
 }
 
-// NewLogger creates a new error logger
-func NewLogger(logger *slog.Logger) *Logger {
+// NewLogger creates a new error logger using the global logging factory
+func NewLogger(component string) *Logger {
+	return &Logger{
+		logger:    logging.GetGlobalLogger(component),
+		metrics:   logging.GetGlobalMetrics(),
+		auditLogger: logging.GetGlobalAuditLogger(),
+		useGlobal: true,
+	}
+}
+
+// NewLoggerWithSlog creates a new error logger with a specific slog logger (backward compatibility)
+func NewLoggerWithSlog(logger *slog.Logger) *Logger {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Logger{logger: logger}
+	return &Logger{
+		logger:    logger,
+		metrics:   logging.GetGlobalMetrics(),
+		auditLogger: logging.GetGlobalAuditLogger(),
+		useGlobal: false,
+	}
 }
 
 // LogError logs an error with full context while returning a safe error for clients
@@ -27,27 +47,55 @@ func (l *Logger) LogError(ctx context.Context, err error, operation string) erro
 		return nil
 	}
 
+	// Get component from context or use default
+	component := logging.GetComponent(ctx)
+	if component == "" {
+		component = "unknown"
+	}
+
 	// Capture stack trace
 	stack := l.captureStack(3) // Skip LogError, captureStack, and the caller
 
-	// Extract request ID from context if available
-	requestID := l.extractRequestID(ctx)
+	// Extract context metadata using unified logging utilities
+	requestID := logging.GetRequestID(ctx)
+	traceID := logging.GetTraceID(ctx)
+	userID := logging.GetUserID(ctx)
 
-	// Build log attributes
+	// Build base log attributes with unified context
 	attrs := []slog.Attr{
 		slog.String("operation", operation),
+		slog.String("component", component),
 		slog.String("error_type", fmt.Sprintf("%T", err)),
 	}
 
+	// Add context attributes if present
 	if requestID != "" {
 		attrs = append(attrs, slog.String("request_id", requestID))
+	}
+	if traceID != "" {
+		attrs = append(attrs, slog.String("trace_id", traceID))
+	}
+	if userID != "" {
+		attrs = append(attrs, slog.String("user_id", userID))
 	}
 
 	// Handle AppError specifically
 	if appErr, ok := err.(*AppError); ok {
+		// Get structured error metadata
+		metadata := logging.GetErrorMetadata(string(appErr.Code), operation, component)
+		
+		// Record error metrics
+		if l.metrics != nil {
+			l.metrics.RecordError(ctx, string(appErr.Code), operation, component)
+		}
+
+		// Add structured metadata
 		attrs = append(attrs,
 			slog.String("error_code", string(appErr.Code)),
 			slog.String("error_message", appErr.Message),
+			slog.String("error_category", string(metadata.Category)),
+			slog.String("error_severity", string(metadata.Severity)),
+			slog.String("error_source", metadata.Source),
 		)
 
 		if appErr.Internal != nil {
@@ -67,20 +115,91 @@ func (l *Logger) LogError(ctx context.Context, err error, operation string) erro
 
 		// Log at appropriate level based on error code
 		level := l.getLogLevel(appErr.Code)
-		l.logger.LogAttrs(ctx, level, "Application error occurred",
+		
+		// Use context-aware logger if using global factory
+		var contextLogger *slog.Logger
+		if l.useGlobal {
+			// Get logger factory and create context-aware logger
+			if factory := l.getFactory(); factory != nil {
+				contextLogger = factory.WithContext(ctx, l.logger)
+			} else {
+				contextLogger = l.logger
+			}
+		} else {
+			contextLogger = l.logger
+		}
+		
+		contextLogger.LogAttrs(ctx, level, "Application error occurred",
 			append(attrs, slog.Any("stack_trace", stack))...)
+
+		// Log to audit logger if available and it's a significant error
+		if l.auditLogger != nil && (metadata.Severity == logging.SeverityHigh || metadata.Severity == logging.SeverityCritical) {
+			event := logging.AuditEvent{
+				EventType:   "error",
+				Action:      operation,
+				Resource:    component,
+				Result:      "error",
+				Details: map[string]interface{}{
+					"error_code": appErr.Code,
+					"error_message": appErr.Message,
+					"error_category": metadata.Category,
+					"error_severity": metadata.Severity,
+				},
+			}
+			l.auditLogger.Log(ctx, event)
+		}
 
 		// Return the safe error
 		return appErr
 	}
 
 	// For non-AppError, wrap it as internal and log
+	errorCode := string(ErrCodeInternal)
+	metadata := logging.GetErrorMetadata(errorCode, operation, component)
+	
+	// Record metrics for internal errors
+	if l.metrics != nil {
+		l.metrics.RecordError(ctx, errorCode, operation, component)
+	}
+
 	attrs = append(attrs,
 		slog.String("error", err.Error()),
+		slog.String("error_code", errorCode),
+		slog.String("error_category", string(metadata.Category)),
+		slog.String("error_severity", string(metadata.Severity)),
+		slog.String("error_source", metadata.Source),
 		slog.Any("stack_trace", stack),
 	)
 
-	l.logger.LogAttrs(ctx, slog.LevelError, "Unexpected error occurred", attrs...)
+	// Use context-aware logger if using global factory
+	var contextLogger *slog.Logger
+	if l.useGlobal {
+		if factory := l.getFactory(); factory != nil {
+			contextLogger = factory.WithContext(ctx, l.logger)
+		} else {
+			contextLogger = l.logger
+		}
+	} else {
+		contextLogger = l.logger
+	}
+
+	contextLogger.LogAttrs(ctx, slog.LevelError, "Unexpected error occurred", attrs...)
+
+	// Log to audit logger for critical internal errors
+	if l.auditLogger != nil {
+		event := logging.AuditEvent{
+			EventType:   "error",
+			Action:      operation,
+			Resource:    component,
+			Result:      "error",
+			Details: map[string]interface{}{
+				"error_message": "Internal error occurred",
+				"error_type": fmt.Sprintf("%T", err),
+				"error_severity": metadata.Severity,
+			},
+		}
+		l.auditLogger.Log(ctx, event)
+	}
 
 	// Return a safe internal error
 	return Internal(err)
@@ -110,22 +229,89 @@ func (l *Logger) LogAndWrapf(ctx context.Context, err error, code ErrorCode, ope
 
 // LogPanic logs a panic and returns an appropriate error
 func (l *Logger) LogPanic(ctx context.Context, recovered interface{}, operation string) error {
+	component := logging.GetComponent(ctx)
+	if component == "" {
+		component = "unknown"
+	}
+	
 	stack := l.captureStack(3)
+	
+	// Extract context metadata
+	requestID := logging.GetRequestID(ctx)
+	traceID := logging.GetTraceID(ctx)
+	userID := logging.GetUserID(ctx)
+	
+	// Get structured error metadata for panic
+	errorCode := string(ErrCodePanic)
+	metadata := logging.GetErrorMetadata(errorCode, operation, component)
+	
+	// Record metrics
+	if l.metrics != nil {
+		l.metrics.RecordError(ctx, errorCode, operation, component)
+	}
 	
 	attrs := []slog.Attr{
 		slog.String("operation", operation),
+		slog.String("component", component),
+		slog.String("error_code", errorCode),
+		slog.String("error_category", string(metadata.Category)),
+		slog.String("error_severity", string(metadata.Severity)),
+		slog.String("error_source", metadata.Source),
 		slog.Any("panic_value", recovered),
 		slog.Any("stack_trace", stack),
 	}
 
-	if requestID := l.extractRequestID(ctx); requestID != "" {
+	// Add context attributes
+	if requestID != "" {
 		attrs = append(attrs, slog.String("request_id", requestID))
 	}
+	if traceID != "" {
+		attrs = append(attrs, slog.String("trace_id", traceID))
+	}
+	if userID != "" {
+		attrs = append(attrs, slog.String("user_id", userID))
+	}
 
-	l.logger.LogAttrs(ctx, slog.LevelError, "Panic recovered", attrs...)
+	// Use context-aware logger if using global factory
+	var contextLogger *slog.Logger
+	if l.useGlobal {
+		if factory := l.getFactory(); factory != nil {
+			contextLogger = factory.WithContext(ctx, l.logger)
+		} else {
+			contextLogger = l.logger
+		}
+	} else {
+		contextLogger = l.logger
+	}
+
+	contextLogger.LogAttrs(ctx, slog.LevelError, "Panic recovered", attrs...)
+
+	// Log to audit logger for panic (critical event)
+	if l.auditLogger != nil {
+		event := logging.AuditEvent{
+			EventType:   "security",
+			Action:      "panic_recovery",
+			Resource:    component,
+			Result:      "error",
+			Details: map[string]interface{}{
+				"message": "Panic recovered in application",
+				"panic_value": recovered,
+				"operation": operation,
+				"component": component,
+			},
+		}
+		l.auditLogger.Log(ctx, event)
+	}
 
 	// Return a safe error
 	return New(ErrCodePanic, "An unexpected error occurred")
+}
+
+// getFactory returns the global logging factory if available
+func (l *Logger) getFactory() *logging.Factory {
+	// This is a stub - in a real implementation, you'd have access to the global factory
+	// For now, we return nil and fall back to direct logger usage
+	return nil
 }
 
 // captureStack captures the current stack trace
@@ -155,24 +341,6 @@ func (l *Logger) captureStack(skip int) []string {
 	return stack
 }
 
-// extractRequestID extracts request ID from context
-func (l *Logger) extractRequestID(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-	
-	// Try common keys for request ID
-	keys := []string{"request_id", "requestId", "req_id", "trace_id"}
-	for _, key := range keys {
-		if val := ctx.Value(key); val != nil {
-			if str, ok := val.(string); ok && str != "" {
-				return str
-			}
-		}
-	}
-	
-	return ""
-}
 
 // getLogLevel determines the appropriate log level for an error code
 func (l *Logger) getLogLevel(code ErrorCode) slog.Level {
@@ -193,11 +361,16 @@ func (l *Logger) getLogLevel(code ErrorCode) slog.Level {
 }
 
 // Default logger instance
-var defaultLogger = NewLogger(nil)
+var defaultLogger = NewLogger("errors")
 
 // SetDefaultLogger sets the default error logger
 func SetDefaultLogger(logger *slog.Logger) {
-	defaultLogger = NewLogger(logger)
+	defaultLogger = NewLoggerWithSlog(logger)
+}
+
+// SetDefaultLoggerComponent sets the default error logger for a specific component
+func SetDefaultLoggerComponent(component string) {
+	defaultLogger = NewLogger(component)
 }
 
 // LogError logs an error using the default logger

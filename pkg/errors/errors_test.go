@@ -517,7 +517,7 @@ func TestLogger(t *testing.T) {
 		},
 	}))
 	
-	logger := NewLogger(testLogger)
+	logger := NewLoggerWithSlog(testLogger)
 	ctx := context.Background()
 	
 	t.Run("LogError with AppError", func(t *testing.T) {
