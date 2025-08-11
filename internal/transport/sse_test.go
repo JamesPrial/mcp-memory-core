@@ -8,11 +8,52 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
 )
+
+// testSSEWriter is a thread-safe ResponseWriter for testing SSE
+type testSSEWriter struct {
+	mu      sync.Mutex
+	buf     *bytes.Buffer
+	headers http.Header
+	written bool
+	status  int
+}
+
+func (w *testSSEWriter) Header() http.Header {
+	return w.headers
+}
+
+func (w *testSSEWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	if !w.written {
+		w.written = true
+		if w.status == 0 {
+			w.status = http.StatusOK
+		}
+	}
+	return w.buf.Write(b)
+}
+
+func (w *testSSEWriter) WriteHeader(status int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	if !w.written {
+		w.written = true
+		w.status = status
+	}
+}
+
+func (w *testSSEWriter) Flush() {
+	// Implement http.Flusher interface
+}
 
 func TestSSETransport_HandleSSE(t *testing.T) {
 	cfg := &config.TransportSettings{
@@ -37,22 +78,38 @@ func TestSSETransport_HandleSSE(t *testing.T) {
 	// Test SSE connection establishment
 	t.Run("SSEConnection", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/events", nil)
-		rr := httptest.NewRecorder()
+		
+		// Use a custom ResponseWriter that captures data safely
+		var buf bytes.Buffer
+		var headers http.Header = make(http.Header)
+		done := make(chan struct{})
+		
+		// Custom response writer that captures writes safely
+		rw := &testSSEWriter{
+			buf:     &buf,
+			headers: headers,
+		}
 		
 		// Use a context with timeout to prevent hanging
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		req = req.WithContext(ctx)
 		
-		go transport.handleSSE(rr, req)
+		go func() {
+			transport.handleSSE(rw, req)
+			close(done)
+		}()
 		
-		// Give it time to write initial events
-		time.Sleep(50 * time.Millisecond)
+		// Wait for handler to finish or timeout
+		select {
+		case <-done:
+		case <-time.After(150 * time.Millisecond):
+		}
 		
-		body := rr.Body.String()
+		body := buf.String()
 		
 		// Check for SSE headers
-		if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		if ct := headers.Get("Content-Type"); ct != "text/event-stream" {
 			t.Errorf("Expected Content-Type text/event-stream, got %s", ct)
 		}
 		
@@ -77,17 +134,33 @@ func TestSSETransport_HandleSSE(t *testing.T) {
 		
 		req := httptest.NewRequest(http.MethodGet, "/events", nil)
 		req.Header.Set("X-Session-ID", session.ID)
-		rr := httptest.NewRecorder()
+		
+		// Use a custom ResponseWriter that captures data safely
+		var buf bytes.Buffer
+		var headers http.Header = make(http.Header)
+		done := make(chan struct{})
+		
+		rw := &testSSEWriter{
+			buf:     &buf,
+			headers: headers,
+		}
 		
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		req = req.WithContext(ctx)
 		
-		go transport.handleSSE(rr, req)
+		go func() {
+			transport.handleSSE(rw, req)
+			close(done)
+		}()
 		
-		time.Sleep(50 * time.Millisecond)
+		// Wait for handler to finish or timeout
+		select {
+		case <-done:
+		case <-time.After(150 * time.Millisecond):
+		}
 		
-		body := rr.Body.String()
+		body := buf.String()
 		
 		// Should not create new session
 		if strings.Contains(body, "event: session") {
