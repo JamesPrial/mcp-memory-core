@@ -13,6 +13,8 @@ import (
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"log/slog"
 )
 
 // TestMainWithValidConfig tests the main function with valid configuration
@@ -194,6 +196,6 @@ func createBackendSafely(cfg *config.Settings) (storage.Backend, error) {
 func createServerComponents(backend storage.Backend) (*knowledge.Manager, *Server) {
 	// This duplicates the server component creation from main()
 	manager := knowledge.NewManager(backend)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	return manager, server
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"log/slog"
 )
 
 func TestStdioIntegration(t *testing.T) {
@@ -168,7 +170,7 @@ func TestHandleToolsCall_ValidationErrors(t *testing.T) {
 	// Create a server with a mock manager
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	
 	tests := []struct {
 		name           string
