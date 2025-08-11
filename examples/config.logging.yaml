@@ -1,0 +1,230 @@
+# Example Logging Configuration for MCP Memory Core
+# This file demonstrates all available logging configuration options
+
+# Basic storage and transport configuration
+storageType: sqlite
+storagePath: ./memory.db
+transportType: http
+
+# Transport settings
+transport:
+  host: localhost
+  port: 8080
+  readTimeout: 30
+  writeTimeout: 30
+  enableCors: true
+
+# Comprehensive logging configuration
+logging:
+  # ============================================
+  # Global Settings
+  # ============================================
+  
+  # Log level: debug, info, warn, error
+  level: info
+  
+  # Output format: json, text
+  format: json
+  
+  # Output destination: stdout, stderr, file
+  output: stdout
+  
+  # File path (required if output=file)
+  # filePath: /var/log/mcp-memory/app.log
+  
+  # ============================================
+  # Performance Settings
+  # ============================================
+  
+  # Buffer size for async logging (bytes)
+  bufferSize: 4096
+  
+  # Enable asynchronous logging for better performance
+  asyncLogging: true
+  
+  # ============================================
+  # Request Tracking
+  # ============================================
+  
+  # Automatically generate and track request IDs
+  enableRequestId: true
+  
+  # Enable distributed tracing with W3C Trace Context
+  enableTracing: true
+  
+  # ============================================
+  # Audit Logging
+  # ============================================
+  
+  # Enable audit trail for compliance
+  enableAudit: true
+  
+  # Audit log file path
+  auditFilePath: ./audit.log
+  
+  # ============================================
+  # Development Settings
+  # ============================================
+  
+  # Include stack traces in error logs
+  enableStackTrace: false
+  
+  # Include caller information (file:line)
+  enableCaller: false
+  
+  # Pretty-print JSON logs (for development)
+  prettyPrint: false
+  
+  # ============================================
+  # Component-Specific Log Levels
+  # ============================================
+  # Override global level for specific components
+  
+  componentLevels:
+    main: info
+    server: info
+    admin: info
+    storage: info
+    storage.sqlite: debug      # More detail for SQLite
+    storage.memory: info
+    transport: info
+    transport.http: debug      # Debug HTTP requests
+    transport.sse: info
+    transport.stdio: info
+    knowledge: info
+    errors: warn
+    
+  # ============================================
+  # Log Sampling Configuration
+  # ============================================
+  # Reduce log volume in high-traffic scenarios
+  
+  sampling:
+    # Enable sampling
+    enabled: true
+    
+    # Sampling rate (0.0 to 1.0)
+    # 0.1 = log 10% of messages
+    rate: 0.1
+    
+    # Number of messages to always log before sampling
+    burstSize: 100
+    
+    # Always log errors regardless of sampling
+    alwaysErrors: true
+  
+  # ============================================
+  # Sensitive Data Masking
+  # ============================================
+  # Automatically redact sensitive information
+  
+  masking:
+    # Enable masking
+    enabled: true
+    
+    # Built-in patterns
+    maskEmails: true          # user@example.com -> u***@example.com
+    maskPhoneNumbers: true    # 555-1234 -> XXX-XXXX
+    maskCreditCards: true     # 4111111111111111 -> 4111XXXXXXXX1111
+    maskSSN: true            # 123-45-6789 -> XXX-XX-6789
+    maskApiKeys: true        # Bearer token -> Bearer ***
+    
+    # Custom fields to mask (by field name)
+    fields:
+      - password
+      - secret
+      - token
+      - apiKey
+      - privateKey
+      - sessionId
+      - authorization
+    
+    # Custom regex patterns to mask
+    patterns:
+      # JWT tokens
+      - "eyJ[A-Za-z0-9-_=]+\\.[A-Za-z0-9-_=]+\\.?[A-Za-z0-9-_.+/=]*"
+      # API keys (common formats)
+      - "sk_[a-zA-Z0-9]{32}"
+      - "pk_[a-zA-Z0-9]{32}"
+      # GitHub tokens
+      - "ghp_[a-zA-Z0-9]{36}"
+      - "ghs_[a-zA-Z0-9]{36}"
+  
+  # ============================================
+  # OpenTelemetry Export Configuration
+  # ============================================
+  # Export logs to OpenTelemetry collectors
+  
+  otlp:
+    # Enable OTLP export
+    enabled: false
+    
+    # OTLP endpoint (gRPC)
+    endpoint: localhost:4317
+    
+    # Use insecure connection (no TLS)
+    insecure: true
+    
+    # Export timeout in seconds
+    timeout: 30
+    
+    # Batch size for export
+    batchSize: 100
+    
+    # Queue size for pending exports
+    queueSize: 1000
+    
+    # Custom headers for authentication
+    headers:
+      # api-key: your-api-key-here
+      # x-org-id: your-org-id
+
+# ============================================
+# Environment-Specific Configurations
+# ============================================
+
+# Development Configuration Example:
+# logging:
+#   level: debug
+#   format: text
+#   output: stdout
+#   asyncLogging: false
+#   enableStackTrace: true
+#   enableCaller: true
+#   prettyPrint: true
+#   sampling:
+#     enabled: false
+#   masking:
+#     enabled: false
+
+# Production Configuration Example:
+# logging:
+#   level: info
+#   format: json
+#   output: file
+#   filePath: /var/log/mcp-memory/app.log
+#   asyncLogging: true
+#   bufferSize: 8192
+#   enableAudit: true
+#   auditFilePath: /var/log/mcp-memory/audit.log
+#   sampling:
+#     enabled: true
+#     rate: 0.1
+#   masking:
+#     enabled: true
+#   otlp:
+#     enabled: true
+#     endpoint: otel-collector.monitoring.svc.cluster.local:4317
+
+# Debugging Configuration Example:
+# logging:
+#   level: debug
+#   format: text
+#   output: stdout
+#   enableStackTrace: true
+#   enableCaller: true
+#   prettyPrint: true
+#   componentLevels:
+#     storage.sqlite: debug
+#     transport.http: debug
+#     errors: debug

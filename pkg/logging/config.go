@@ -2,7 +2,9 @@ package logging
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
+	"time"
 )
 
 // LogFormat represents the output format for logs
@@ -69,6 +71,15 @@ type Config struct {
 	// Metrics collection
 	Metrics MetricsConfig `yaml:"metrics,omitempty" json:"metrics,omitempty"`
 	
+	// Distributed tracing
+	// Tracing TracingConfig `yaml:"tracing,omitempty" json:"tracing,omitempty"`
+	
+	// Advanced sampling strategies
+	AdvancedSampling AdvancedSamplingConfig `yaml:"advancedSampling,omitempty" json:"advancedSampling,omitempty"`
+	
+	// Health monitoring
+	Health HealthConfig `yaml:"health,omitempty" json:"health,omitempty"`
+	
 	// Development settings
 	EnableStackTrace bool `yaml:"enableStackTrace" json:"enableStackTrace"`
 	EnableCaller     bool `yaml:"enableCaller" json:"enableCaller"`
@@ -99,13 +110,60 @@ type MaskingConfig struct {
 
 // OTLPConfig defines OpenTelemetry export configuration
 type OTLPConfig struct {
-	Enabled     bool   `yaml:"enabled" json:"enabled"`
-	Endpoint    string `yaml:"endpoint" json:"endpoint"`
-	Headers     map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Insecure    bool   `yaml:"insecure" json:"insecure"`
-	Timeout     int    `yaml:"timeout" json:"timeout"` // seconds
-	BatchSize   int    `yaml:"batchSize" json:"batchSize"`
-	QueueSize   int    `yaml:"queueSize" json:"queueSize"`
+	Enabled                bool              `yaml:"enabled" json:"enabled"`
+	Endpoint               string            `yaml:"endpoint" json:"endpoint"`
+	Protocol               string            `yaml:"protocol,omitempty" json:"protocol,omitempty"` // "grpc" or "http", auto-detect if empty
+	Headers                map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Insecure               bool              `yaml:"insecure" json:"insecure"`
+	Timeout                int               `yaml:"timeout" json:"timeout"` // seconds
+	BatchSize              int               `yaml:"batchSize" json:"batchSize"`
+	BatchTimeout           int               `yaml:"batchTimeout" json:"batchTimeout"` // seconds
+	QueueSize              int               `yaml:"queueSize" json:"queueSize"`
+	HealthCheckInterval    int               `yaml:"healthCheckInterval" json:"healthCheckInterval"` // seconds
+	TLS                    TLSConfig         `yaml:"tls,omitempty" json:"tls,omitempty"`
+	RetryConfig            RetryConfig       `yaml:"retry,omitempty" json:"retry,omitempty"`
+}
+
+// TLSConfig defines TLS configuration for OTLP exports
+type TLSConfig struct {
+	InsecureSkipVerify bool   `yaml:"insecureSkipVerify" json:"insecureSkipVerify"`
+	ServerName         string `yaml:"serverName,omitempty" json:"serverName,omitempty"`
+	CertFile           string `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile            string `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
+	CAFile             string `yaml:"caFile,omitempty" json:"caFile,omitempty"`
+}
+
+// RetryConfig defines retry configuration for OTLP exports
+type RetryConfig struct {
+	Enabled         bool `yaml:"enabled" json:"enabled"`
+	InitialInterval int  `yaml:"initialInterval" json:"initialInterval"` // milliseconds
+	MaxInterval     int  `yaml:"maxInterval" json:"maxInterval"`         // milliseconds
+	MaxElapsedTime  int  `yaml:"maxElapsedTime" json:"maxElapsedTime"`   // milliseconds
+	MaxRetries      int  `yaml:"maxRetries" json:"maxRetries"`
+}
+
+// OTLPHealthStatus represents the health status of OTLP components
+type OTLPHealthStatus struct {
+	Healthy             bool      `json:"healthy"`
+	ConnectionHealthy   bool      `json:"connection_healthy"`
+	LastExportTime      time.Time `json:"last_export_time"`
+	LastError           error     `json:"last_error,omitempty"`
+	ExportAttempts      int64     `json:"export_attempts"`
+	ExportSuccesses     int64     `json:"export_successes"`
+	ExportFailures      int64     `json:"export_failures"`
+}
+
+// ExportStats represents export statistics
+type ExportStats struct {
+	TotalAttempts     int64     `json:"total_attempts"`
+	TotalSuccesses    int64     `json:"total_successes"`
+	TotalFailures     int64     `json:"total_failures"`
+	SuccessRate       float64   `json:"success_rate"`
+	LastExportTime    time.Time `json:"last_export_time"`
+	LastError         error     `json:"last_error,omitempty"`
+	QueueSize         int       `json:"queue_size"`
+	QueueCapacity     int       `json:"queue_capacity"`
+	BufferUtilization float64   `json:"buffer_utilization"`
 }
 
 // DefaultConfig returns a default logging configuration
@@ -140,13 +198,31 @@ func DefaultConfig() *Config {
 		},
 		
 		OTLP: OTLPConfig{
-			Enabled:   false,
-			Timeout:   30,
-			BatchSize: 100,
-			QueueSize: 1000,
+			Enabled:             false,
+			Timeout:             30,
+			BatchSize:           100,
+			BatchTimeout:        5,
+			QueueSize:           1000,
+			HealthCheckInterval: 30,
+			TLS: TLSConfig{
+				InsecureSkipVerify: false,
+			},
+			RetryConfig: RetryConfig{
+				Enabled:         true,
+				InitialInterval: 1000,  // 1 second
+				MaxInterval:     30000, // 30 seconds
+				MaxElapsedTime:  300000, // 5 minutes
+				MaxRetries:      5,
+			},
 		},
 		
 		Metrics: DefaultMetricsConfig(),
+		
+		// Tracing: DefaultTracingConfig(),
+		
+		AdvancedSampling: DefaultAdvancedSamplingConfig(),
+		
+		Health: DefaultHealthConfig(),
 		
 		EnableStackTrace: false,
 		EnableCaller:     false,
@@ -177,6 +253,12 @@ func ProductionConfig() *Config {
 	config.Sampling.Enabled = true
 	config.Sampling.Rate = 0.1 // Sample 10% of non-error logs
 	config.EnableAudit = true
+	
+	// Enable observability features in production
+	config.OTLP.Enabled = true
+	// config.Tracing.Enabled = true
+	config.AdvancedSampling.Enabled = true
+	config.Health.Enabled = true
 	return config
 }
 
@@ -239,8 +321,13 @@ func (c *Config) Validate() error {
 	}
 	
 	// Validate OTLP
-	if c.OTLP.Enabled && strings.TrimSpace(c.OTLP.Endpoint) == "" {
-		return fmt.Errorf("OTLP endpoint required when OTLP is enabled")
+	if c.OTLP.Enabled {
+		if strings.TrimSpace(c.OTLP.Endpoint) == "" {
+			return fmt.Errorf("OTLP endpoint required when OTLP is enabled")
+		}
+		if err := c.OTLP.Validate(); err != nil {
+			return fmt.Errorf("invalid OTLP config: %w", err)
+		}
 	}
 	
 	// Validate buffer size
@@ -257,4 +344,107 @@ func (c *Config) GetLevelForComponent(component string) LogLevel {
 		return level
 	}
 	return c.Level
+}
+
+// Validate validates the OTLP configuration
+func (c *OTLPConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	
+	// Validate endpoint
+	if strings.TrimSpace(c.Endpoint) == "" {
+		return fmt.Errorf("endpoint is required when OTLP is enabled")
+	}
+	
+	// Validate endpoint format
+	if _, err := url.Parse(c.Endpoint); err != nil {
+		return fmt.Errorf("invalid endpoint URL: %w", err)
+	}
+	
+	// Validate protocol
+	if c.Protocol != "" && c.Protocol != "grpc" && c.Protocol != "http" {
+		return fmt.Errorf("protocol must be 'grpc' or 'http', got '%s'", c.Protocol)
+	}
+	
+	// Validate timeout
+	if c.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive, got %d", c.Timeout)
+	}
+	
+	// Validate batch size
+	if c.BatchSize <= 0 {
+		return fmt.Errorf("batchSize must be positive, got %d", c.BatchSize)
+	}
+	
+	// Validate batch timeout
+	if c.BatchTimeout <= 0 {
+		return fmt.Errorf("batchTimeout must be positive, got %d", c.BatchTimeout)
+	}
+	
+	// Validate queue size
+	if c.QueueSize <= 0 {
+		return fmt.Errorf("queueSize must be positive, got %d", c.QueueSize)
+	}
+	
+	// Validate health check interval
+	if c.HealthCheckInterval <= 0 {
+		return fmt.Errorf("healthCheckInterval must be positive, got %d", c.HealthCheckInterval)
+	}
+	
+	// Validate TLS config
+	if err := c.TLS.Validate(); err != nil {
+		return fmt.Errorf("invalid TLS config: %w", err)
+	}
+	
+	// Validate retry config
+	if err := c.RetryConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid retry config: %w", err)
+	}
+	
+	return nil
+}
+
+// Validate validates the TLS configuration
+func (c *TLSConfig) Validate() error {
+	// If cert file is provided, key file must also be provided
+	if c.CertFile != "" && c.KeyFile == "" {
+		return fmt.Errorf("keyFile is required when certFile is provided")
+	}
+	
+	// If key file is provided, cert file must also be provided
+	if c.KeyFile != "" && c.CertFile == "" {
+		return fmt.Errorf("certFile is required when keyFile is provided")
+	}
+	
+	return nil
+}
+
+// Validate validates the retry configuration
+func (c *RetryConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	
+	if c.InitialInterval <= 0 {
+		return fmt.Errorf("initialInterval must be positive, got %d", c.InitialInterval)
+	}
+	
+	if c.MaxInterval <= 0 {
+		return fmt.Errorf("maxInterval must be positive, got %d", c.MaxInterval)
+	}
+	
+	if c.InitialInterval > c.MaxInterval {
+		return fmt.Errorf("initialInterval (%d) cannot be greater than maxInterval (%d)", c.InitialInterval, c.MaxInterval)
+	}
+	
+	if c.MaxElapsedTime <= 0 {
+		return fmt.Errorf("maxElapsedTime must be positive, got %d", c.MaxElapsedTime)
+	}
+	
+	if c.MaxRetries < 0 {
+		return fmt.Errorf("maxRetries must be non-negative, got %d", c.MaxRetries)
+	}
+	
+	return nil
 }

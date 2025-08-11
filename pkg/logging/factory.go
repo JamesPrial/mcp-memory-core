@@ -409,3 +409,29 @@ func GetGlobalSampler() *Sampler {
 	
 	return globalFactory.GetSampler()
 }
+
+// Shutdown gracefully shuts down the global logging factory
+func Shutdown() error {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	
+	if globalFactory == nil {
+		return nil
+	}
+	
+	err := globalFactory.Close()
+	globalFactory = nil
+	return err
+}
+
+// UpdateGlobalLevel dynamically updates the log level for a component
+func UpdateGlobalLevel(component string, level LogLevel) {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+	
+	if globalFactory == nil {
+		return
+	}
+	
+	globalFactory.UpdateLevel(component, level)
+}

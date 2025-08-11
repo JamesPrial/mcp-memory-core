@@ -15,6 +15,8 @@ This project was developed using a rigorous Test-Driven Development (TDD) method
 - **SQLite Backend:** Uses a powerful SQLite backend with WAL-mode for efficient and concurrent data access.
 - **Multiple Transport Layers:** Supports standard `stdio` for traditional MCP clients as well as `http` and `sse` for modern, web-based integrations.
 - **Production Ready:** Includes Docker support, health checks, and a clean, modular architecture.
+- **Enterprise Logging:** Comprehensive structured logging with request correlation, audit trails, and observability integration. [Learn more](LOGGING.md)
+- **Standardized Error Handling:** Consistent error codes, safe error messages, and automatic HTTP/JSON-RPC mapping. [Learn more](ERROR_HANDLING.md)
 
 ## 🔧 Architecture
 
@@ -46,8 +48,11 @@ The server is designed with a clean separation of concerns:
 - **`internal/transport`**: Transport layer with support for stdio, HTTP, and SSE protocols.
 - **`internal/knowledge`**: The core business logic, mapping MCP tools to storage operations.
 - **`internal/storage`**: The storage layer, with a `Backend` interface and concrete implementations.
+- **`internal/admin`**: Admin server for runtime configuration and health monitoring.
 - **`pkg/config`**: Handles loading configuration from YAML files.
 - **`pkg/mcp`**: Contains the core MCP data type definitions.
+- **`pkg/errors`**: Standardized error handling with consistent error codes.
+- **`pkg/logging`**: Comprehensive structured logging with observability features.
 
 ## ⚙️ Configuration
 
@@ -67,12 +72,20 @@ storageType: "sqlite"
 # Path to the SQLite database file
 storagePath: "./knowledge.db"
 
-# Log level: debug, info, warn, error
+# Log level: debug, info, warn, error (legacy, still supported)
 logLevel: "info"
 
 # SQLite specific settings
 sqlite:
   walMode: true # Write-Ahead Logging for better concurrency
+
+# Enhanced logging configuration (optional, see LOGGING.md for full options)
+logging:
+  level: info
+  format: json
+  enableRequestId: true
+  enableAudit: true
+  auditFilePath: audit.log
 ```
 
 ### HTTP Transport Configuration
