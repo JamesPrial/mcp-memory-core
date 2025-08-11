@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -273,15 +274,14 @@ func TestSqliteBackend_ErrorHandling(t *testing.T) {
 	t.Run("invalid database path", func(t *testing.T) {
 		_, err := NewSqliteBackend("/root/no_permission.db", true)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "failed to open database") || 
-			strings.Contains(err.Error(), "failed to ping database"))
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection), "Expected storage connection error")
 	})
 
 	t.Run("directory as database path", func(t *testing.T) {
 		tempDir := t.TempDir()
 		_, err := NewSqliteBackend(tempDir, true)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to ping database")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection), "Expected storage connection error")
 	})
 
 	t.Run("context cancellation", func(t *testing.T) {
@@ -300,19 +300,24 @@ func TestSqliteBackend_ErrorHandling(t *testing.T) {
 
 		err := backend.CreateEntities(ctx, entities)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
+		// The error may be wrapped, so check the internal error
+		internalErr := errors.GetInternal(err)
+		assert.Contains(t, internalErr.Error(), "context canceled")
 
 		_, err = backend.GetEntity(ctx, "test-id")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
+		internalErr = errors.GetInternal(err)
+		assert.Contains(t, internalErr.Error(), "context canceled")
 
 		_, err = backend.SearchEntities(ctx, "test")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
+		internalErr = errors.GetInternal(err)
+		assert.Contains(t, internalErr.Error(), "context canceled")
 
 		_, err = backend.GetStatistics(ctx)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
+		internalErr = errors.GetInternal(err)
+		assert.Contains(t, internalErr.Error(), "context canceled")
 	})
 
 	t.Run("database closed operations", func(t *testing.T) {
@@ -358,11 +363,11 @@ func TestSqliteBackend_ErrorHandling(t *testing.T) {
 		// Operations should fail with unmarshal errors
 		_, err = backend.GetEntity(ctx, "corrupted-id")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal observations")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageInvalidQuery), "Expected storage invalid query error")
 
 		_, err = backend.SearchEntities(ctx, "Test")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal observations")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageInvalidQuery), "Expected storage invalid query error")
 	})
 
 	t.Run("empty slice operations", func(t *testing.T) {
@@ -426,8 +431,8 @@ func TestSqliteBackend_DatabaseIntegrity(t *testing.T) {
 		// Should fail during initialization
 		_, err = NewSqliteBackend(dbPath, true)
 		if err != nil {
-			assert.True(t, strings.Contains(err.Error(), "failed to initialize schema") || 
-				strings.Contains(err.Error(), "failed to ping database"))
+			assert.True(t, errors.IsAny(err, errors.ErrCodeStorageInitialization, errors.ErrCodeStorageConnection), 
+				"Expected storage initialization or connection error")
 		}
 		
 		// Restore permissions for cleanup
@@ -444,7 +449,7 @@ func TestSqliteBackend_DatabaseIntegrity(t *testing.T) {
 		
 		_, err = NewSqliteBackend(dbPath, true)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to ping database")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection), "Expected storage connection error")
 	})
 
 	t.Run("database locking scenarios", func(t *testing.T) {

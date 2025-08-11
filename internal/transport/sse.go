@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
+	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 )
 
 // SSEClient represents a connected SSE client
@@ -32,6 +34,8 @@ type SSETransport struct {
 	server         *http.Server
 	handler        RequestHandler
 	sessionManager *SessionManager
+	logger         *slog.Logger
+	interceptor    *logging.RequestInterceptor
 	clients        map[string]*SSEClient
 	clientsMu      sync.RWMutex
 	messageQueues  map[string]chan *JSONRPCResponse
@@ -40,9 +44,12 @@ type SSETransport struct {
 
 // NewSSETransport creates a new SSE transport
 func NewSSETransport(cfg *config.TransportSettings) *SSETransport {
+	logger := logging.GetGlobalLogger("transport.sse")
 	return &SSETransport{
 		config:         cfg,
 		sessionManager: NewSessionManager(30 * time.Minute),
+		logger:         logger,
+		interceptor:    logging.NewRequestInterceptor(logger),
 		clients:        make(map[string]*SSEClient),
 		messageQueues:  make(map[string]chan *JSONRPCResponse),
 	}
@@ -51,6 +58,13 @@ func NewSSETransport(cfg *config.TransportSettings) *SSETransport {
 // Start begins listening for SSE connections
 func (t *SSETransport) Start(ctx context.Context, handler RequestHandler) error {
 	t.handler = handler
+	
+	// Log transport startup
+	t.logger.InfoContext(ctx, "SSE transport starting",
+		slog.String("transport", "sse"),
+		slog.String("host", t.config.Host),
+		slog.Int("port", t.config.Port),
+	)
 	
 	mux := http.NewServeMux()
 	
@@ -63,10 +77,13 @@ func (t *SSETransport) Start(ctx context.Context, handler RequestHandler) error 
 	// Health check endpoint
 	mux.HandleFunc("/health", t.handleHealth)
 	
-	// CORS middleware
+	// Apply request logging middleware
 	var httpHandler http.Handler = mux
+	httpHandler = t.interceptor.HTTPMiddleware(httpHandler)
+	
+	// CORS middleware
 	if t.config.EnableCORS {
-		httpHandler = t.corsMiddleware(mux)
+		httpHandler = t.corsMiddleware(httpHandler)
 	}
 	
 	// Create HTTP server
@@ -78,10 +95,17 @@ func (t *SSETransport) Start(ctx context.Context, handler RequestHandler) error 
 		WriteTimeout: time.Duration(t.config.WriteTimeout) * time.Second,
 	}
 	
+	t.logger.InfoContext(ctx, "SSE server starting",
+		slog.String("address", addr),
+	)
+	
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
 		if err := t.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			t.logger.ErrorContext(ctx, "SSE server error",
+				slog.String("error", err.Error()),
+			)
 			errChan <- err
 		}
 	}()
@@ -89,6 +113,7 @@ func (t *SSETransport) Start(ctx context.Context, handler RequestHandler) error 
 	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
+		t.logger.InfoContext(ctx, "SSE transport context cancelled")
 		return t.Stop(context.Background())
 	case err := <-errChan:
 		return err
@@ -97,16 +122,31 @@ func (t *SSETransport) Start(ctx context.Context, handler RequestHandler) error 
 
 // Stop gracefully shuts down the SSE server
 func (t *SSETransport) Stop(ctx context.Context) error {
+	t.logger.InfoContext(ctx, "SSE transport stopping")
+	
 	// Close all client connections
 	t.clientsMu.Lock()
+	clientCount := len(t.clients)
 	for _, client := range t.clients {
 		close(client.Done)
 	}
 	t.clientsMu.Unlock()
 	
+	t.logger.InfoContext(ctx, "Closed SSE client connections",
+		slog.Int("client_count", clientCount),
+	)
+	
 	if t.server != nil {
 		t.sessionManager.Stop()
-		return t.server.Shutdown(ctx)
+		err := t.server.Shutdown(ctx)
+		if err != nil {
+			t.logger.ErrorContext(ctx, "Error during SSE server shutdown",
+				slog.String("error", err.Error()),
+			)
+		} else {
+			t.logger.InfoContext(ctx, "SSE transport stopped successfully")
+		}
+		return err
 	}
 	return nil
 }
@@ -120,34 +160,39 @@ func (t *SSETransport) Name() string {
 func (t *SSETransport) handleRPC(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respErr := CreateFallbackErrorResponse(nil, "Method not allowed")
+		t.sendJSONErrorResponse(w, respErr, http.StatusMethodNotAllowed)
 		return
 	}
 	
 	// Check content type
 	contentType := r.Header.Get("Content-Type")
 	if contentType != "application/json" && contentType != "application/json-rpc" {
-		http.Error(w, "Content-Type must be application/json or application/json-rpc", http.StatusBadRequest)
+		respErr := CreateFallbackErrorResponse(nil, "Content-Type must be application/json or application/json-rpc")
+		t.sendJSONErrorResponse(w, respErr, http.StatusBadRequest)
 		return
 	}
 	
 	// Get session ID
 	sessionID := r.Header.Get("X-Session-ID")
 	if sessionID == "" {
-		http.Error(w, "X-Session-ID header required", http.StatusBadRequest)
+		respErr := CreateFallbackErrorResponse(nil, "X-Session-ID header required")
+		t.sendJSONErrorResponse(w, respErr, http.StatusBadRequest)
 		return
 	}
 	
 	// Check if session exists
 	if _, exists := t.sessionManager.GetSession(sessionID); !exists {
-		http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
+		respErr := CreateFallbackErrorResponse(nil, "Invalid or expired session")
+		t.sendJSONErrorResponse(w, respErr, http.StatusUnauthorized)
 		return
 	}
 	
 	// Read request body
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024)) // 10MB limit
 	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		respErr := CreateFallbackErrorResponse(nil, "Failed to read request body")
+		t.sendJSONErrorResponse(w, respErr, http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -155,7 +200,8 @@ func (t *SSETransport) handleRPC(w http.ResponseWriter, r *http.Request) {
 	// Parse JSON-RPC request
 	var req JSONRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		t.sendSSEResponse(sessionID, NewParseError())
+		respErr := NewParseError()
+		t.sendSSEResponse(sessionID, respErr)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -174,10 +220,19 @@ func (t *SSETransport) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 // handleSSE handles SSE connections
 func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	t.logger.InfoContext(ctx, "New SSE connection request",
+		slog.String("remote_addr", r.RemoteAddr),
+		slog.String("user_agent", r.UserAgent()),
+	)
+	
 	// Check if SSE is supported
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		t.logger.ErrorContext(ctx, "SSE not supported by response writer")
+		respErr := CreateFallbackErrorResponse(nil, "SSE not supported")
+		t.sendJSONErrorResponse(w, respErr, http.StatusInternalServerError)
 		return
 	}
 	
@@ -194,25 +249,49 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		session, err := t.sessionManager.CreateSession("sse")
 		if err != nil {
-			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+			t.logger.ErrorContext(ctx, "Failed to create SSE session",
+				slog.String("error", err.Error()),
+			)
+			// Send error as SSE event since headers are already set
+			errorResp := ToJSONRPCResponse(nil, err)
+			t.sendErrorEvent(w, flusher, errorResp)
 			return
 		}
 		sessionID = session.ID
+		
+		t.logger.InfoContext(ctx, "Created new SSE session",
+			slog.String("session_id", sessionID),
+		)
 		
 		// Send session ID as first event
 		fmt.Fprintf(w, "event: session\ndata: {\"sessionId\":\"%s\"}\n\n", sessionID)
 		flusher.Flush()
 	} else {
 		if _, exists := t.sessionManager.GetSession(sessionID); !exists {
+			t.logger.WarnContext(ctx, "SSE session expired, creating new one",
+				slog.String("old_session_id", sessionID),
+			)
 			// Session expired, create new one
 			session, err := t.sessionManager.CreateSession("sse")
 			if err != nil {
-				http.Error(w, "Failed to create session", http.StatusInternalServerError)
+				t.logger.ErrorContext(ctx, "Failed to create replacement SSE session",
+					slog.String("error", err.Error()),
+				)
+				// Send error as SSE event since headers are already set
+				errorResp := ToJSONRPCResponse(nil, err)
+				t.sendErrorEvent(w, flusher, errorResp)
 				return
 			}
 			sessionID = session.ID
+			t.logger.InfoContext(ctx, "Created replacement SSE session",
+				slog.String("session_id", sessionID),
+			)
 			fmt.Fprintf(w, "event: session\ndata: {\"sessionId\":\"%s\"}\n\n", sessionID)
 			flusher.Flush()
+		} else {
+			t.logger.DebugContext(ctx, "Using existing SSE session",
+				slog.String("session_id", sessionID),
+			)
 		}
 	}
 	
@@ -226,7 +305,13 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Register client
 	t.clientsMu.Lock()
 	t.clients[sessionID] = client
+	clientCount := len(t.clients)
 	t.clientsMu.Unlock()
+	
+	t.logger.InfoContext(ctx, "SSE client connected",
+		slog.String("session_id", sessionID),
+		slog.Int("total_clients", clientCount),
+	)
 	
 	// Create message queue for this session
 	t.queuesMu.Lock()
@@ -240,8 +325,14 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		t.clientsMu.Lock()
 		delete(t.clients, sessionID)
+		remainingClients := len(t.clients)
 		t.clientsMu.Unlock()
 		close(client.EventChannel)
+		
+		t.logger.InfoContext(ctx, "SSE client disconnected",
+			slog.String("session_id", sessionID),
+			slog.Int("remaining_clients", remainingClients),
+		)
 	}()
 	
 	// Send initial connection event
@@ -250,6 +341,10 @@ func (t *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	
 	// Handle reconnection with Last-Event-ID
 	if lastEventID != "" {
+		t.logger.InfoContext(ctx, "SSE client reconnection",
+			slog.String("session_id", sessionID),
+			slog.String("last_event_id", lastEventID),
+		)
 		fmt.Fprintf(w, "event: reconnected\ndata: {\"lastEventId\":\"%s\"}\n\n", lastEventID)
 		flusher.Flush()
 	}
@@ -365,4 +460,30 @@ func (t *SSETransport) BroadcastEvent(event *SSEEvent) {
 			// Client channel full, skip
 		}
 	}
+}
+
+// sendJSONErrorResponse sends a JSON error response with proper status code
+func (t *SSETransport) sendJSONErrorResponse(w http.ResponseWriter, resp *JSONRPCResponse, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Critical failure - try fallback
+		fallbackResp := CreateFallbackErrorResponse(resp.ID, "Failed to encode error response")
+		if fallbackBytes, fallbackErr := json.Marshal(fallbackResp); fallbackErr == nil {
+			w.Write(fallbackBytes)
+		}
+	}
+}
+
+// sendErrorEvent sends an error as an SSE event when headers are already set
+func (t *SSETransport) sendErrorEvent(w http.ResponseWriter, flusher http.Flusher, errorResp *JSONRPCResponse) {
+	data, err := json.Marshal(errorResp)
+	if err != nil {
+		// Fallback error event
+		fmt.Fprintf(w, "event: error\ndata: {\"error\":\"Failed to serialize error\"}\n\n")
+	} else {
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(data))
+	}
+	flusher.Flush()
 }

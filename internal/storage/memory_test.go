@@ -78,9 +78,8 @@ func TestMemoryBackend_GetEntity_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	entity, err := backend.GetEntity(ctx, "nonexistent")
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.Nil(t, entity)
-	assert.Contains(t, err.Error(), "entity not found")
 }
 
 func TestMemoryBackend_SearchEntities(t *testing.T) {

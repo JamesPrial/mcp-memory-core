@@ -16,6 +16,7 @@ type Settings struct {
 	Sqlite        SqliteSettings   `yaml:"sqlite"`
 	TransportType string           `yaml:"transportType"`
 	Transport     TransportSettings `yaml:"transport"`
+	Logging       *LoggingSettings  `yaml:"logging"`
 }
 
 type SqliteSettings struct {
@@ -30,6 +31,53 @@ type TransportSettings struct {
 	MaxConnections    int    `yaml:"maxConnections"`
 	EnableCORS        bool   `yaml:"enableCors"`
 	SSEHeartbeatSecs  int    `yaml:"sseHeartbeatSecs"`
+}
+
+type LoggingSettings struct {
+	Format           string                     `yaml:"format"`
+	Output           string                     `yaml:"output"`
+	FilePath         string                     `yaml:"filePath"`
+	BufferSize       int                        `yaml:"bufferSize"`
+	AsyncLogging     bool                       `yaml:"asyncLogging"`
+	EnableRequestID  bool                       `yaml:"enableRequestId"`
+	EnableTracing    bool                       `yaml:"enableTracing"`
+	EnableAudit      bool                       `yaml:"enableAudit"`
+	AuditFilePath    string                     `yaml:"auditFilePath"`
+	EnableStackTrace bool                       `yaml:"enableStackTrace"`
+	EnableCaller     bool                       `yaml:"enableCaller"`
+	PrettyPrint      bool                       `yaml:"prettyPrint"`
+	ComponentLevels  map[string]string          `yaml:"componentLevels"`
+	Sampling         *LoggingSamplingSettings   `yaml:"sampling"`
+	Masking          *LoggingMaskingSettings    `yaml:"masking"`
+	OTLP             *LoggingOTLPSettings       `yaml:"otlp"`
+}
+
+type LoggingSamplingSettings struct {
+	Enabled      bool    `yaml:"enabled"`
+	Rate         float64 `yaml:"rate"`
+	BurstSize    int     `yaml:"burstSize"`
+	AlwaysErrors bool    `yaml:"alwaysErrors"`
+}
+
+type LoggingMaskingSettings struct {
+	Enabled          bool     `yaml:"enabled"`
+	Fields           []string `yaml:"fields"`
+	Patterns         []string `yaml:"patterns"`
+	MaskEmails       bool     `yaml:"maskEmails"`
+	MaskPhoneNumbers bool     `yaml:"maskPhoneNumbers"`
+	MaskCreditCards  bool     `yaml:"maskCreditCards"`
+	MaskSSN          bool     `yaml:"maskSsn"`
+	MaskAPIKeys      bool     `yaml:"maskApiKeys"`
+}
+
+type LoggingOTLPSettings struct {
+	Enabled   bool              `yaml:"enabled"`
+	Endpoint  string            `yaml:"endpoint"`
+	Headers   map[string]string `yaml:"headers"`
+	Insecure  bool              `yaml:"insecure"`
+	Timeout   int               `yaml:"timeout"`
+	BatchSize int               `yaml:"batchSize"`
+	QueueSize int               `yaml:"queueSize"`
 }
 
 // Validate validates the configuration settings
