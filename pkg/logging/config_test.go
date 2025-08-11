@@ -352,6 +352,7 @@ func TestConfig_Validate(t *testing.T) {
 				OTLP: OTLPConfig{
 					Enabled:  true,
 					Endpoint: "http://localhost:4317",
+					Timeout:  30, // seconds
 				},
 			},
 			expectErr: false,

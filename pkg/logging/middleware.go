@@ -263,7 +263,7 @@ type OperationTimer struct {
 func StartTimer(ctx context.Context, logger *slog.Logger, operation string) *OperationTimer {
 	startTime := time.Now()
 	
-	// Ensure we have a request ID
+	// Preserve existing context but ensure we have a request ID
 	if GetRequestID(ctx) == "" {
 		ctx = NewRequestContext(ctx, operation)
 	}
@@ -275,8 +275,10 @@ func StartTimer(ctx context.Context, logger *slog.Logger, operation string) *Ope
 		ctx:       ctx,
 	}
 	
-	logger.DebugContext(ctx, "Operation started",
+	requestID := GetRequestID(ctx)
+	logger.InfoContext(ctx, "Operation started",
 		slog.String("operation", operation),
+		slog.String("request_id", requestID),
 		slog.Time("start_time", startTime),
 	)
 	
@@ -287,8 +289,10 @@ func StartTimer(ctx context.Context, logger *slog.Logger, operation string) *Ope
 func (t *OperationTimer) End() time.Duration {
 	duration := time.Since(t.startTime)
 	
-	t.logger.DebugContext(t.ctx, "Operation completed",
+	requestID := GetRequestID(t.ctx)
+	t.logger.InfoContext(t.ctx, "Operation completed",
 		slog.String("operation", t.operation),
+		slog.String("request_id", requestID),
 		slog.Duration("duration", duration),
 	)
 	
@@ -298,16 +302,19 @@ func (t *OperationTimer) End() time.Duration {
 // EndWithError completes the timer and logs the duration with an error
 func (t *OperationTimer) EndWithError(err error) time.Duration {
 	duration := time.Since(t.startTime)
+	requestID := GetRequestID(t.ctx)
 	
 	if err != nil {
 		t.logger.ErrorContext(t.ctx, "Operation failed",
 			slog.String("operation", t.operation),
+			slog.String("request_id", requestID),
 			slog.Duration("duration", duration),
 			slog.String("error", err.Error()),
 		)
 	} else {
-		t.logger.DebugContext(t.ctx, "Operation completed",
+		t.logger.InfoContext(t.ctx, "Operation completed",
 			slog.String("operation", t.operation),
+			slog.String("request_id", requestID),
 			slog.Duration("duration", duration),
 		)
 	}
@@ -317,15 +324,18 @@ func (t *OperationTimer) EndWithError(err error) time.Duration {
 
 // LogLatency is a helper function to log operation latencies
 func LogLatency(ctx context.Context, logger *slog.Logger, operation string, duration time.Duration, err error) {
+	requestID := GetRequestID(ctx)
 	if err != nil {
 		logger.WarnContext(ctx, "Operation completed with error",
 			slog.String("operation", operation),
+			slog.String("request_id", requestID),
 			slog.Duration("duration", duration),
 			slog.String("error", err.Error()),
 		)
 	} else {
 		logger.InfoContext(ctx, "Operation completed",
 			slog.String("operation", operation),
+			slog.String("request_id", requestID),
 			slog.Duration("duration", duration),
 		)
 	}

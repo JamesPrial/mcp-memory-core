@@ -16,6 +16,7 @@ type TestLogger struct {
 	mu      sync.RWMutex
 	entries []TestLogEntry
 	buffer  *bytes.Buffer
+	parsed  bool
 }
 
 // TestLogEntry represents a captured log entry
@@ -38,6 +39,7 @@ func NewTestLogger() *TestLogger {
 	return &TestLogger{
 		entries: make([]TestLogEntry, 0),
 		buffer:  bytes.NewBuffer(nil),
+		parsed:  false,
 	}
 }
 
@@ -59,10 +61,10 @@ func (tl *TestLogger) GetLogger() *slog.Logger {
 
 // GetEntries returns all captured log entries
 func (tl *TestLogger) GetEntries() []TestLogEntry {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
 	
-	// Parse buffer content if needed
+	// Always parse buffer content to ensure latest entries are captured
 	tl.parseBuffer()
 	
 	entries := make([]TestLogEntry, len(tl.entries))
@@ -121,6 +123,9 @@ func (tl *TestLogger) parseBuffer() {
 	content := tl.buffer.String()
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	
+	// Track how many entries we had before parsing
+	initialeEntryCount := len(tl.entries)
+	
 	for _, line := range lines {
 		if line == "" {
 			continue
@@ -174,24 +179,38 @@ func (tl *TestLogger) parseBuffer() {
 			entry.Error = errorStr
 		}
 		
-		if durationStr, ok := rawEntry["duration"].(string); ok {
-			if d, err := time.ParseDuration(durationStr); err == nil {
+		// Handle duration parsing - slog.Duration can be serialized as number or string
+		if durationValue, exists := rawEntry["duration"]; exists {
+			switch v := durationValue.(type) {
+			case string:
+				if d, err := time.ParseDuration(v); err == nil {
+					entry.Duration = &d
+				}
+			case float64:
+				// Duration as nanoseconds
+				d := time.Duration(v)
+				entry.Duration = &d
+			case int64:
+				// Duration as nanoseconds
+				d := time.Duration(v)
 				entry.Duration = &d
 			}
 		}
 		
-		// Capture all other attributes
+		// Capture ALL attributes - this ensures test compatibility
 		for key, value := range rawEntry {
-			if !isStandardField(key) {
-				entry.Attrs[key] = value
-			}
+			// Store all fields in Attrs map for test assertions
+			entry.Attrs[key] = value
 		}
 		
 		tl.entries = append(tl.entries, entry)
 	}
 	
-	// Clear buffer after parsing
-	tl.buffer.Reset()
+	// Only clear buffer if we successfully parsed new entries
+	if len(tl.entries) > initialeEntryCount {
+		tl.buffer.Reset()
+		tl.parsed = true
+	}
 }
 
 // isStandardField checks if a field is a standard log field
@@ -216,12 +235,13 @@ func (tl *TestLogger) Clear() {
 	
 	tl.entries = tl.entries[:0]
 	tl.buffer.Reset()
+	tl.parsed = false
 }
 
 // Count returns the total number of captured entries
 func (tl *TestLogger) Count() int {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
+	tl.mu.Lock() // Use Lock instead of RLock since parseBuffer modifies state
+	defer tl.mu.Unlock()
 	
 	tl.parseBuffer()
 	return len(tl.entries)

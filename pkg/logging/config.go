@@ -254,8 +254,8 @@ func ProductionConfig() *Config {
 	config.Sampling.Rate = 0.1 // Sample 10% of non-error logs
 	config.EnableAudit = true
 	
-	// Enable observability features in production
-	config.OTLP.Enabled = true
+	// Observability features should be configured with endpoints when enabled
+	// config.OTLP.Enabled = true  // Enable when OTLP endpoint is configured
 	// config.Tracing.Enabled = true
 	config.AdvancedSampling.Enabled = true
 	config.Health.Enabled = true
