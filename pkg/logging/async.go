@@ -26,7 +26,7 @@ type AsyncHandler struct {
 	doneCh    chan struct{}
 	
 	// Statistics
-	stats AsyncStats
+	stats *AsyncStats
 	
 	// Error handling
 	errorHandler func(error)
@@ -103,9 +103,10 @@ func NewAsyncHandlerWithConfig(handler slog.Handler, config AsyncConfig) *AsyncH
 		errorHandler: func(err error) {
 			// Default error handler - could log to stderr or another handler
 		},
+		stats: &AsyncStats{
+			BufferSize: config.BufferSize,
+		},
 	}
-
-	ah.stats.BufferSize = config.BufferSize
 	
 	// Start background processing goroutine
 	go ah.processLoop()
@@ -296,13 +297,15 @@ func (ah *AsyncHandler) GetStats() AsyncStats {
 	ah.mu.RLock()
 	defer ah.mu.RUnlock()
 
-	stats := ah.stats
-	stats.BufferUsed = len(ah.buffer)
-	stats.BufferedEntries = atomic.LoadInt64(&ah.stats.BufferedEntries)
-	stats.ProcessedEntries = atomic.LoadInt64(&ah.stats.ProcessedEntries)
-	stats.DroppedEntries = atomic.LoadInt64(&ah.stats.DroppedEntries)
-	stats.FlushCount = atomic.LoadInt64(&ah.stats.FlushCount)
-	stats.ErrorCount = atomic.LoadInt64(&ah.stats.ErrorCount)
+	stats := AsyncStats{
+		BufferSize:       ah.stats.BufferSize,
+		BufferUsed:       len(ah.buffer),
+		BufferedEntries:  atomic.LoadInt64(&ah.stats.BufferedEntries),
+		ProcessedEntries: atomic.LoadInt64(&ah.stats.ProcessedEntries),
+		DroppedEntries:   atomic.LoadInt64(&ah.stats.DroppedEntries),
+		FlushCount:       atomic.LoadInt64(&ah.stats.FlushCount),
+		ErrorCount:       atomic.LoadInt64(&ah.stats.ErrorCount),
+	}
 	
 	return stats
 }
