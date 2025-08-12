@@ -5,27 +5,39 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/JamesPrial/mcp-memory-core/internal/admin"
 	"github.com/JamesPrial/mcp-memory-core/internal/knowledge"
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
 	"github.com/JamesPrial/mcp-memory-core/internal/transport"
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
+	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 )
 
+
+const version = "1.0.0" // TODO: Make this dynamic
 
 // Server represents the MCP server
 type Server struct {
 	manager *knowledge.Manager
+	logger  *slog.Logger
 }
 
 // NewServer creates a new MCP server
-func NewServer(manager *knowledge.Manager) *Server {
+func NewServer(manager *knowledge.Manager, logger *slog.Logger) *Server {
 	return &Server{
 		manager: manager,
+		logger:  logger,
 	}
 }
 
@@ -129,7 +141,12 @@ func (s *Server) sanitizeError(err error) string {
 		return "Unknown error occurred"
 	}
 
-	errMsg := strings.ToLower(err.Error())
+	return s.sanitizeErrorString(err.Error())
+}
+
+// sanitizeErrorString sanitizes an error message string
+func (s *Server) sanitizeErrorString(errMsg string) string {
+	errMsg = strings.ToLower(errMsg)
 	
 	// Replace internal error patterns with user-friendly messages
 	if strings.Contains(errMsg, "database") || strings.Contains(errMsg, "sql") {
@@ -189,7 +206,13 @@ func (s *Server) HandleRequest(ctx context.Context, req *transport.JSONRPCReques
 func (s *Server) handleToolsList(req *transport.JSONRPCRequest) *transport.JSONRPCResponse {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Panic in handleToolsList: %v", r)
+			if s.logger != nil {
+				s.logger.Error("Panic in handleToolsList", 
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+			} else {
+				log.Printf("Panic in handleToolsList: %v", r)
+			}
 		}
 	}()
 
@@ -221,7 +244,13 @@ func (s *Server) handleToolsList(req *transport.JSONRPCRequest) *transport.JSONR
 func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequest) *transport.JSONRPCResponse {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Panic in handleToolsCall: %v", r)
+			if s.logger != nil {
+				s.logger.Error("Panic in handleToolsCall", 
+					slog.Any("panic", r),
+					slog.String("stack", string(debug.Stack())))
+			} else {
+				log.Printf("Panic in handleToolsCall: %v", r)
+			}
 		}
 	}()
 
@@ -354,8 +383,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 	// Call the tool
 	result, err := s.manager.HandleCallTool(ctx, toolName, arguments)
 	if err != nil {
-		// Check if error needs sanitization
+		// Build full error message including wrapped errors
 		errMsg := err.Error()
+		
+		// Check if it's an AppError with an internal error
+		if appErr, ok := err.(*errors.AppError); ok && appErr.Internal != nil {
+			// Include the wrapped error in the check
+			errMsg = fmt.Sprintf("%s: %v", errMsg, appErr.Internal)
+		}
+		
+		// Check if error needs sanitization - check both the error message and any wrapped errors
 		needsSanitization := strings.Contains(strings.ToLower(errMsg), "password") ||
 			strings.Contains(strings.ToLower(errMsg), "secret") ||
 			strings.Contains(strings.ToLower(errMsg), "token") ||
@@ -364,7 +401,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 		
 		var message string
 		if needsSanitization {
-			message = s.sanitizeError(err)
+			// Pass the full error string for sanitization
+			message = s.sanitizeErrorString(errMsg)
 		} else {
 			message = fmt.Sprintf("Internal error: %s", err.Error())
 		}
@@ -388,7 +426,259 @@ func (s *Server) handleToolsCall(ctx context.Context, req *transport.JSONRPCRequ
 }
 
 
+// convertLegacyLogConfig converts old LogLevel configuration to new logging config
+func convertLegacyLogConfig(cfg *config.Settings) *logging.Config {
+	logConfig := logging.DefaultConfig()
+	
+	// IMPORTANT: For stdio transport, logs MUST go to stderr to avoid mixing with JSON-RPC responses
+	if cfg.TransportType == "stdio" {
+		logConfig.Output = logging.LogOutputStderr
+	}
+	
+	// Convert legacy LogLevel if present and no new logging config
+	if cfg.LogLevel != "" && cfg.Logging == nil {
+		switch strings.ToLower(cfg.LogLevel) {
+		case "debug":
+			logConfig.Level = logging.LogLevelDebug
+		case "info":
+			logConfig.Level = logging.LogLevelInfo
+		case "warn", "warning":
+			logConfig.Level = logging.LogLevelWarn
+		case "error":
+			logConfig.Level = logging.LogLevelError
+		default:
+			logConfig.Level = logging.LogLevelInfo
+		}
+	}
+	
+	// Override with new logging config if present
+	if cfg.Logging != nil {
+		// Map config fields to logging config
+		if cfg.Logging.Format != "" {
+			if cfg.Logging.Format == "json" {
+				logConfig.Format = logging.LogFormatJSON
+			} else {
+				logConfig.Format = logging.LogFormatText
+			}
+		}
+		
+		if cfg.Logging.Output != "" {
+			switch cfg.Logging.Output {
+			case "stdout":
+				// Override to stderr for stdio transport to avoid mixing logs with JSON-RPC
+				if cfg.TransportType == "stdio" {
+					logConfig.Output = logging.LogOutputStderr
+				} else {
+					logConfig.Output = logging.LogOutputStdout
+				}
+			case "stderr":
+				logConfig.Output = logging.LogOutputStderr
+			case "file":
+				logConfig.Output = logging.LogOutputFile
+				logConfig.FilePath = cfg.Logging.FilePath
+			}
+		}
+		
+		if cfg.Logging.BufferSize > 0 {
+			logConfig.BufferSize = cfg.Logging.BufferSize
+		}
+		
+		logConfig.AsyncLogging = cfg.Logging.AsyncLogging
+		logConfig.EnableRequestID = cfg.Logging.EnableRequestID
+		logConfig.EnableTracing = cfg.Logging.EnableTracing
+		logConfig.EnableAudit = cfg.Logging.EnableAudit
+		logConfig.AuditFilePath = cfg.Logging.AuditFilePath
+		logConfig.EnableStackTrace = cfg.Logging.EnableStackTrace
+		logConfig.EnableCaller = cfg.Logging.EnableCaller
+		logConfig.PrettyPrint = cfg.Logging.PrettyPrint
+		
+		// Convert component levels
+		if cfg.Logging.ComponentLevels != nil {
+			logConfig.ComponentLevels = make(map[string]logging.LogLevel)
+			for comp, level := range cfg.Logging.ComponentLevels {
+				switch strings.ToLower(level) {
+				case "debug":
+					logConfig.ComponentLevels[comp] = logging.LogLevelDebug
+				case "info":
+					logConfig.ComponentLevels[comp] = logging.LogLevelInfo
+				case "warn", "warning":
+					logConfig.ComponentLevels[comp] = logging.LogLevelWarn
+				case "error":
+					logConfig.ComponentLevels[comp] = logging.LogLevelError
+				}
+			}
+		}
+		
+		// Convert sampling settings
+		if cfg.Logging.Sampling != nil {
+			logConfig.Sampling.Enabled = cfg.Logging.Sampling.Enabled
+			logConfig.Sampling.Rate = cfg.Logging.Sampling.Rate
+			logConfig.Sampling.BurstSize = cfg.Logging.Sampling.BurstSize
+			logConfig.Sampling.AlwaysErrors = cfg.Logging.Sampling.AlwaysErrors
+		}
+		
+		// Convert masking settings
+		if cfg.Logging.Masking != nil {
+			logConfig.Masking.Enabled = cfg.Logging.Masking.Enabled
+			logConfig.Masking.Fields = cfg.Logging.Masking.Fields
+			logConfig.Masking.Patterns = cfg.Logging.Masking.Patterns
+			logConfig.Masking.MaskEmails = cfg.Logging.Masking.MaskEmails
+			logConfig.Masking.MaskPhoneNumbers = cfg.Logging.Masking.MaskPhoneNumbers
+			logConfig.Masking.MaskCreditCards = cfg.Logging.Masking.MaskCreditCards
+			logConfig.Masking.MaskSSN = cfg.Logging.Masking.MaskSSN
+			logConfig.Masking.MaskAPIKeys = cfg.Logging.Masking.MaskAPIKeys
+		}
+		
+		// Convert OTLP settings
+		if cfg.Logging.OTLP != nil {
+			logConfig.OTLP.Enabled = cfg.Logging.OTLP.Enabled
+			logConfig.OTLP.Endpoint = cfg.Logging.OTLP.Endpoint
+			logConfig.OTLP.Headers = cfg.Logging.OTLP.Headers
+			logConfig.OTLP.Insecure = cfg.Logging.OTLP.Insecure
+			logConfig.OTLP.Timeout = cfg.Logging.OTLP.Timeout
+			logConfig.OTLP.BatchSize = cfg.Logging.OTLP.BatchSize
+			logConfig.OTLP.QueueSize = cfg.Logging.OTLP.QueueSize
+		}
+	}
+	
+	// Apply environment variable overrides
+	applyEnvOverrides(logConfig)
+	
+	return logConfig
+}
+
+// applyEnvOverrides applies environment variable overrides to logging config
+func applyEnvOverrides(config *logging.Config) {
+	if level := os.Getenv("MCP_LOG_LEVEL"); level != "" {
+		switch strings.ToLower(level) {
+		case "debug":
+			config.Level = logging.LogLevelDebug
+		case "info":
+			config.Level = logging.LogLevelInfo
+		case "warn", "warning":
+			config.Level = logging.LogLevelWarn
+		case "error":
+			config.Level = logging.LogLevelError
+		}
+	}
+	
+	if format := os.Getenv("MCP_LOG_FORMAT"); format != "" {
+		if format == "json" {
+			config.Format = logging.LogFormatJSON
+		} else {
+			config.Format = logging.LogFormatText
+		}
+	}
+	
+	if output := os.Getenv("MCP_LOG_OUTPUT"); output != "" {
+		switch output {
+		case "stdout":
+			config.Output = logging.LogOutputStdout
+		case "stderr":
+			config.Output = logging.LogOutputStderr
+		case "file":
+			config.Output = logging.LogOutputFile
+			if path := os.Getenv("MCP_LOG_FILE_PATH"); path != "" {
+				config.FilePath = path
+			}
+		}
+	}
+	
+	if asyncStr := os.Getenv("MCP_LOG_ASYNC"); asyncStr != "" {
+		if async, err := strconv.ParseBool(asyncStr); err == nil {
+			config.AsyncLogging = async
+		}
+	}
+	
+	if auditStr := os.Getenv("MCP_LOG_AUDIT"); auditStr != "" {
+		if audit, err := strconv.ParseBool(auditStr); err == nil {
+			config.EnableAudit = audit
+		}
+	}
+}
+
+// maskSensitiveConfig creates a copy of config with sensitive data masked
+func maskSensitiveConfig(cfg *config.Settings) map[string]interface{} {
+	masked := make(map[string]interface{})
+	masked["storageType"] = cfg.StorageType
+	masked["transportType"] = cfg.TransportType
+	masked["httpPort"] = cfg.HTTPPort
+	masked["logLevel"] = cfg.LogLevel
+	
+	// Mask storage path if it contains sensitive info
+	if cfg.StoragePath != "" {
+		if strings.Contains(cfg.StoragePath, "password") || strings.Contains(cfg.StoragePath, "secret") {
+			masked["storagePath"] = "[MASKED]"
+		} else {
+			masked["storagePath"] = cfg.StoragePath
+		}
+	}
+	
+	// Include transport settings but mask sensitive data
+	if cfg.Transport.Host != "" {
+		masked["transport"] = map[string]interface{}{
+			"host": cfg.Transport.Host,
+			"port": cfg.Transport.Port,
+			"readTimeout": cfg.Transport.ReadTimeout,
+			"writeTimeout": cfg.Transport.WriteTimeout,
+			"maxConnections": cfg.Transport.MaxConnections,
+			"enableCORS": cfg.Transport.EnableCORS,
+		}
+	}
+	
+	return masked
+}
+
+// setupSignalHandling sets up signal handlers for graceful shutdown and log level changes
+func setupSignalHandling(ctx context.Context, cancel context.CancelFunc, logger *slog.Logger) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGUSR1, syscall.SIGUSR2)
+	
+	// Track current debug state for toggle functionality
+	debugEnabled := false
+	
+	go func() {
+		for {
+			select {
+			case sig := <-sigChan:
+				switch sig {
+				case os.Interrupt, syscall.SIGTERM:
+					logger.Info("Received shutdown signal", slog.String("signal", sig.String()))
+					cancel()
+					return
+				case syscall.SIGUSR1:
+					// Toggle debug logging for all components
+					if debugEnabled {
+						logger.Info("SIGUSR1: Disabling debug logging")
+						logging.UpdateGlobalLevel("main", logging.LogLevelInfo)
+						logging.UpdateGlobalLevel("server", logging.LogLevelInfo)
+						logging.UpdateGlobalLevel("storage", logging.LogLevelInfo)
+						logging.UpdateGlobalLevel("transport", logging.LogLevelInfo)
+						logging.UpdateGlobalLevel("knowledge", logging.LogLevelInfo)
+						debugEnabled = false
+					} else {
+						logger.Info("SIGUSR1: Enabling debug logging")
+						logging.UpdateGlobalLevel("main", logging.LogLevelDebug)
+						logging.UpdateGlobalLevel("server", logging.LogLevelDebug)
+						logging.UpdateGlobalLevel("storage", logging.LogLevelDebug)
+						logging.UpdateGlobalLevel("transport", logging.LogLevelDebug)
+						logging.UpdateGlobalLevel("knowledge", logging.LogLevelDebug)
+						debugEnabled = true
+					}
+				case syscall.SIGUSR2:
+					// Rotate logs if using file output (placeholder)
+					logger.Info("SIGUSR2: Log rotation requested (not implemented)")
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 func main() {
+	startTime := time.Now()
+	
 	// Parse command-line flags
 	var configPath string
 	flag.StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
@@ -400,47 +690,118 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Initialize logging system first
+	logConfig := convertLegacyLogConfig(cfg)
+	if err := logging.Initialize(logConfig); err != nil {
+		log.Fatalf("Failed to initialize logging: %v", err)
+	}
+	defer func() {
+		if err := logging.Shutdown(); err != nil {
+			log.Printf("Error shutting down logging: %v", err)
+		}
+	}()
+	
+	// Get main logger
+	logger := logging.GetGlobalLogger("main")
+	logger.Info("Starting MCP Memory Server", 
+		slog.String("version", version),
+		slog.Any("config", maskSensitiveConfig(cfg)),
+		slog.Duration("config_load_time", time.Since(startTime)))
+	
+	// Set up panic recovery
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Server panic", 
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+			os.Exit(1)
+		}
+	}()
+
 	// Initialize storage backend
+	storageStart := time.Now()
 	backend, err := storage.NewBackend(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create storage backend: %v", err)
+		logger.Error("Failed to create storage backend", slog.Any("error", err))
+		os.Exit(1)
 	}
-	defer backend.Close()
+	defer func() {
+		if err := backend.Close(); err != nil {
+			logger.Error("Error closing storage backend", slog.Any("error", err))
+		}
+	}()
+	logger.Info("Storage backend initialized", 
+		slog.String("type", cfg.StorageType),
+		slog.Duration("init_time", time.Since(storageStart)))
 
 	// Create knowledge manager
+	knowledgeStart := time.Now()
 	manager := knowledge.NewManager(backend)
+	logger.Info("Knowledge manager initialized", 
+		slog.Duration("init_time", time.Since(knowledgeStart)))
 
-	// Create server
-	server := NewServer(manager)
+	// Create server with logger
+	serverLogger := logging.GetGlobalLogger("server")
+	server := NewServer(manager, serverLogger)
 	
 	// Create transport based on configuration
+	transportStart := time.Now()
 	factory := transport.NewFactory()
 	trans, err := factory.CreateTransport(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create transport: %v", err)
+		logger.Error("Failed to create transport", slog.Any("error", err))
+		os.Exit(1)
 	}
+	logger.Info("Transport initialized", 
+		slog.String("type", cfg.TransportType),
+		slog.String("name", trans.Name()),
+		slog.Duration("init_time", time.Since(transportStart)))
 	
 	// Set up context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	// Set up signal handlers
+	setupSignalHandling(ctx, cancel, logger)
 	
-	go func() {
-		<-sigChan
-		log.Println("Shutting down server...")
-		cancel()
-	}()
+	// Start admin server if HTTP transport is enabled (reuse the port + 1000)
+	var adminServer *admin.AdminServer
+	if cfg.TransportType == "http" && cfg.Transport.Port > 0 {
+		adminPort := cfg.Transport.Port + 1000
+		adminServer = admin.NewAdminServer()
+		
+		go func() {
+			logger.Info("Starting admin server", slog.Int("port", adminPort))
+			if err := adminServer.StartServer(adminPort); err != nil && err != http.ErrServerClosed {
+				logger.Error("Admin server error", slog.Any("error", err))
+			}
+		}()
+	}
+	
+	// Start metrics server if enabled
+	metricsCollector := logging.GetGlobalMetricsCollector()
+	if metricsCollector != nil {
+		go func() {
+			logger.Info("Starting metrics server")
+			if err := metricsCollector.StartMetricsServer(); err != nil && err != http.ErrServerClosed {
+				logger.Error("Metrics server error", slog.Any("error", err))
+			}
+		}()
+	}
+	
+	// Log successful startup
+	totalStartTime := time.Since(startTime)
+	logger.Info("Server initialization completed", 
+		slog.Duration("total_startup_time", totalStartTime))
 	
 	// Start the transport with request handler
-	log.Printf("Starting %s transport...", trans.Name())
+	logger.Info("Starting transport", slog.String("transport", trans.Name()))
 	if err := trans.Start(ctx, server.HandleRequest); err != nil {
 		if err != context.Canceled {
-			log.Fatalf("Transport error: %v", err)
+			logger.Error("Transport error", slog.Any("error", err))
+			os.Exit(1)
 		}
 	}
 	
-	log.Println("Server stopped")
+	logger.Info("Server stopped gracefully")
 }

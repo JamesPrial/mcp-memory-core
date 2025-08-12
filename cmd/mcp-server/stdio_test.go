@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ type TestableServer struct {
 // NewTestableServer creates a testable server
 func NewTestableServer(manager *knowledge.Manager, stdin io.Reader, stdout io.Writer) *TestableServer {
 	return &TestableServer{
-		Server: NewServer(manager),
+		Server: NewServer(manager, slog.Default()),
 		stdin:  stdin,
 		stdout: stdout,
 	}
@@ -85,7 +86,7 @@ func (ts *TestableServer) testableSendResponse(resp *transport.JSONRPCResponse) 
 func createTestServer(t *testing.T) *Server {
 	backend := storage.NewMemoryBackend()
 	manager := knowledge.NewManager(backend)
-	return NewServer(manager)
+	return NewServer(manager, slog.Default())
 }
 
 // TestServerTestableRun tests the testable version of Run method
@@ -506,7 +507,7 @@ func TestNewServer(t *testing.T) {
 	backend := storage.NewMemoryBackend()
 	manager := knowledge.NewManager(backend)
 	
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	
 	assert.NotNil(t, server)
 	assert.Equal(t, manager, server.manager)

@@ -2,13 +2,14 @@ package knowledge
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/JamesPrial/mcp-memory-core/internal/storage"
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -37,6 +38,7 @@ func TestManager_EdgeCases_HandleCallTool_UnknownTool(t *testing.T) {
 			result, err := manager.HandleCallTool(context.Background(), toolName, map[string]interface{}{})
 			assert.Error(t, err)
 			assert.Nil(t, result)
+			assert.True(t, errors.Is(err, errors.ErrCodeTransportMethodNotFound))
 			assert.Contains(t, err.Error(), "unknown tool")
 		})
 	}
@@ -51,14 +53,16 @@ func TestManager_EdgeCases_HandleCallTool_CreateEntities_MalformedArgs(t *testin
 		result, err := manager.HandleCallTool(ctx, "memory__create_entities", map[string]interface{}{})
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "entities parameter is required")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired))
+		assert.Contains(t, err.Error(), "entities is required")
 	})
 
 	t.Run("NilArgs", func(t *testing.T) {
 		result, err := manager.HandleCallTool(ctx, "memory__create_entities", nil)
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "entities parameter is required")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired))
+		assert.Contains(t, err.Error(), "entities is required")
 	})
 
 	t.Run("EntitiesNotArray", func(t *testing.T) {
@@ -76,7 +80,8 @@ func TestManager_EdgeCases_HandleCallTool_CreateEntities_MalformedArgs(t *testin
 				result, err := manager.HandleCallTool(ctx, "memory__create_entities", args)
 				assert.Error(t, err)
 				assert.Nil(t, result)
-				assert.Contains(t, err.Error(), "entities must be an array")
+				assert.True(t, errors.Is(err, errors.ErrCodeValidationInvalid))
+				assert.Contains(t, err.Error(), "must be an array")
 			})
 		}
 	})
@@ -120,6 +125,7 @@ func TestManager_EdgeCases_HandleCallTool_CreateEntities_MalformedArgs(t *testin
 				result, err := manager.HandleCallTool(ctx, "memory__create_entities", args)
 				assert.Error(t, err)
 				assert.Nil(t, result)
+				assert.True(t, errors.Is(err, errors.ErrCodeValidationInvalid))
 				assert.Contains(t, err.Error(), "failed to decode entity")
 			})
 		}
@@ -142,7 +148,7 @@ func TestManager_EdgeCases_HandleCallTool_CreateEntities_MalformedArgs(t *testin
 		mockStorage := new(storage.MockBackend)
 		manager := NewManager(mockStorage)
 		
-		expectedError := errors.New("storage connection failed")
+		expectedError := stderrors.New("storage connection failed")
 		mockStorage.On("CreateEntities", mock.Anything, mock.AnythingOfType("[]mcp.Entity")).Return(expectedError)
 
 		args := map[string]interface{}{
@@ -154,8 +160,8 @@ func TestManager_EdgeCases_HandleCallTool_CreateEntities_MalformedArgs(t *testin
 		result, err := manager.HandleCallTool(ctx, "memory__create_entities", args)
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed to create entities")
-		assert.Contains(t, err.Error(), "storage connection failed")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection))
+		assert.Contains(t, err.Error(), "Failed to create entities")
 	})
 
 	t.Run("MassiveEntitiesArray", func(t *testing.T) {
@@ -218,7 +224,8 @@ func TestManager_EdgeCases_HandleCallTool_Search_MalformedArgs(t *testing.T) {
 		result, err := manager.HandleCallTool(ctx, "memory__search", map[string]interface{}{})
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "query parameter is required")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired))
+		assert.Contains(t, err.Error(), "query is required")
 	})
 
 	t.Run("QueryNotString", func(t *testing.T) {
@@ -236,7 +243,8 @@ func TestManager_EdgeCases_HandleCallTool_Search_MalformedArgs(t *testing.T) {
 				result, err := manager.HandleCallTool(ctx, "memory__search", args)
 				assert.Error(t, err)
 				assert.Nil(t, result)
-				assert.Contains(t, err.Error(), "query must be a string")
+				assert.True(t, errors.Is(err, errors.ErrCodeValidationInvalid))
+				assert.Contains(t, err.Error(), "must be a string")
 			})
 		}
 	})
@@ -288,15 +296,15 @@ func TestManager_EdgeCases_HandleCallTool_Search_MalformedArgs(t *testing.T) {
 		mockStorage := new(storage.MockBackend)
 		manager := NewManager(mockStorage)
 		
-		expectedError := errors.New("search index corrupted")
+		expectedError := stderrors.New("search index corrupted")
 		mockStorage.On("SearchEntities", mock.Anything, "test").Return(nil, expectedError)
 
 		args := map[string]interface{}{"query": "test"}
 		result, err := manager.HandleCallTool(ctx, "memory__search", args)
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed to search entities")
-		assert.Contains(t, err.Error(), "search index corrupted")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection))
+		assert.Contains(t, err.Error(), "Failed to search entities")
 	})
 }
 
@@ -309,7 +317,8 @@ func TestManager_EdgeCases_HandleCallTool_GetEntity_MalformedArgs(t *testing.T) 
 		result, err := manager.HandleCallTool(ctx, "memory__get_entity", map[string]interface{}{})
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "id parameter is required")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired))
+		assert.Contains(t, err.Error(), "id is required")
 	})
 
 	t.Run("IdNotString", func(t *testing.T) {
@@ -327,7 +336,8 @@ func TestManager_EdgeCases_HandleCallTool_GetEntity_MalformedArgs(t *testing.T) 
 				result, err := manager.HandleCallTool(ctx, "memory__get_entity", args)
 				assert.Error(t, err)
 				assert.Nil(t, result)
-				assert.Contains(t, err.Error(), "id must be a string")
+				assert.True(t, errors.Is(err, errors.ErrCodeValidationInvalid))
+				assert.Contains(t, err.Error(), "must be a string")
 			})
 		}
 	})
@@ -344,14 +354,15 @@ func TestManager_EdgeCases_HandleCallTool_GetEntity_MalformedArgs(t *testing.T) 
 
 	t.Run("VeryLongId", func(t *testing.T) {
 		longId := strings.Repeat("very_long_id", 10000)
-		expectedError := errors.New("entity not found")
+		expectedError := stderrors.New("entity not found")
 		mockStorage.On("GetEntity", mock.Anything, longId).Return(nil, expectedError)
 
 		args := map[string]interface{}{"id": longId}
 		result, err := manager.HandleCallTool(ctx, "memory__get_entity", args)
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed to get entity")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection))
+		assert.Contains(t, err.Error(), "Failed to get entity")
 	})
 
 	t.Run("SpecialCharacterId", func(t *testing.T) {
@@ -383,15 +394,15 @@ func TestManager_EdgeCases_HandleCallTool_GetEntity_MalformedArgs(t *testing.T) 
 		mockStorage := new(storage.MockBackend)
 		manager := NewManager(mockStorage)
 		
-		expectedError := errors.New("database connection lost")
+		expectedError := stderrors.New("database connection lost")
 		mockStorage.On("GetEntity", mock.Anything, "test_id").Return(nil, expectedError)
 
 		args := map[string]interface{}{"id": "test_id"}
 		result, err := manager.HandleCallTool(ctx, "memory__get_entity", args)
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed to get entity")
-		assert.Contains(t, err.Error(), "database connection lost")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection))
+		assert.Contains(t, err.Error(), "Failed to get entity")
 	})
 }
 
@@ -427,14 +438,14 @@ func TestManager_EdgeCases_HandleCallTool_GetStatistics_MalformedArgs(t *testing
 		mockStorage := new(storage.MockBackend)
 		manager := NewManager(mockStorage)
 		
-		expectedError := errors.New("statistics calculation failed")
+		expectedError := stderrors.New("statistics calculation failed")
 		mockStorage.On("GetStatistics", mock.Anything).Return(nil, expectedError)
 
 		result, err := manager.HandleCallTool(ctx, "memory__get_statistics", map[string]interface{}{})
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed to get statistics")
-		assert.Contains(t, err.Error(), "statistics calculation failed")
+		assert.True(t, errors.Is(err, errors.ErrCodeStorageConnection))
+		assert.Contains(t, err.Error(), "Failed to get statistics")
 	})
 }
 
@@ -543,7 +554,7 @@ func TestManager_EdgeCases_ContextHandling(t *testing.T) {
 		result, err := manager.HandleCallTool(ctx, "memory__create_entities", args)
 		// Context cancellation should be checked and return an error
 		assert.Error(t, err)
-		assert.Equal(t, context.Canceled, err)
+		assert.True(t, errors.Is(err, errors.ErrCodeContextCanceled))
 		assert.Nil(t, result)
 	})
 
@@ -559,7 +570,7 @@ func TestManager_EdgeCases_ContextHandling(t *testing.T) {
 		result, err := manager.HandleCallTool(ctx, "memory__search", args)
 		// Context timeout should be checked and return an error
 		assert.Error(t, err)
-		assert.Equal(t, context.DeadlineExceeded, err)
+		assert.True(t, errors.Is(err, errors.ErrCodeContextTimeout))
 		assert.Nil(t, result)
 	})
 }

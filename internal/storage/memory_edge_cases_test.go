@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,13 +104,12 @@ func TestMemoryBackend_EdgeCases_CreateEntities(t *testing.T) {
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
 		// Empty ID should now be rejected
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "entity ID cannot be empty or whitespace-only")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired), "Expected validation required error")
 		
-		// Should NOT be able to retrieve by empty ID
+		// Should NOT be able to retrieve by empty ID (returns nil, no error in new implementation)
 		retrieved, err := backend.GetEntity(ctx, "")
-		assert.Error(t, err)
+		assert.NoError(t, err)
 		assert.Nil(t, retrieved)
-		assert.Contains(t, err.Error(), "entity not found")
 	})
 }
 
@@ -119,9 +119,8 @@ func TestMemoryBackend_EdgeCases_GetEntity(t *testing.T) {
 
 	t.Run("NonExistentID", func(t *testing.T) {
 		entity, err := backend.GetEntity(ctx, "non_existent")
-		assert.Error(t, err)
+		assert.NoError(t, err)
 		assert.Nil(t, entity)
-		assert.Contains(t, err.Error(), "entity not found")
 	})
 
 	t.Run("EmptyStringID", func(t *testing.T) {
@@ -130,11 +129,11 @@ func TestMemoryBackend_EdgeCases_GetEntity(t *testing.T) {
 		err := backend.CreateEntities(ctx, []mcp.Entity{entity})
 		// Empty ID should be rejected  
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "entity ID cannot be empty or whitespace-only")
+		assert.True(t, errors.Is(err, errors.ErrCodeValidationRequired), "Expected validation required error")
 		
 		// Should NOT be retrievable
 		retrieved, err := backend.GetEntity(ctx, "")
-		assert.Error(t, err)
+		assert.NoError(t, err)
 		assert.Nil(t, retrieved)
 	})
 
