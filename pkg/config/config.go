@@ -16,6 +16,7 @@ type Settings struct {
 	Sqlite        SqliteSettings   `yaml:"sqlite"`
 	TransportType string           `yaml:"transportType"`
 	Transport     TransportSettings `yaml:"transport"`
+	Logging       *LoggingSettings  `yaml:"logging"`
 }
 
 type SqliteSettings struct {
@@ -30,6 +31,53 @@ type TransportSettings struct {
 	MaxConnections    int    `yaml:"maxConnections"`
 	EnableCORS        bool   `yaml:"enableCors"`
 	SSEHeartbeatSecs  int    `yaml:"sseHeartbeatSecs"`
+}
+
+type LoggingSettings struct {
+	Format           string                     `yaml:"format"`
+	Output           string                     `yaml:"output"`
+	FilePath         string                     `yaml:"filePath"`
+	BufferSize       int                        `yaml:"bufferSize"`
+	AsyncLogging     bool                       `yaml:"asyncLogging"`
+	EnableRequestID  bool                       `yaml:"enableRequestId"`
+	EnableTracing    bool                       `yaml:"enableTracing"`
+	EnableAudit      bool                       `yaml:"enableAudit"`
+	AuditFilePath    string                     `yaml:"auditFilePath"`
+	EnableStackTrace bool                       `yaml:"enableStackTrace"`
+	EnableCaller     bool                       `yaml:"enableCaller"`
+	PrettyPrint      bool                       `yaml:"prettyPrint"`
+	ComponentLevels  map[string]string          `yaml:"componentLevels"`
+	Sampling         *LoggingSamplingSettings   `yaml:"sampling"`
+	Masking          *LoggingMaskingSettings    `yaml:"masking"`
+	OTLP             *LoggingOTLPSettings       `yaml:"otlp"`
+}
+
+type LoggingSamplingSettings struct {
+	Enabled      bool    `yaml:"enabled"`
+	Rate         float64 `yaml:"rate"`
+	BurstSize    int     `yaml:"burstSize"`
+	AlwaysErrors bool    `yaml:"alwaysErrors"`
+}
+
+type LoggingMaskingSettings struct {
+	Enabled          bool     `yaml:"enabled"`
+	Fields           []string `yaml:"fields"`
+	Patterns         []string `yaml:"patterns"`
+	MaskEmails       bool     `yaml:"maskEmails"`
+	MaskPhoneNumbers bool     `yaml:"maskPhoneNumbers"`
+	MaskCreditCards  bool     `yaml:"maskCreditCards"`
+	MaskSSN          bool     `yaml:"maskSsn"`
+	MaskAPIKeys      bool     `yaml:"maskApiKeys"`
+}
+
+type LoggingOTLPSettings struct {
+	Enabled   bool              `yaml:"enabled"`
+	Endpoint  string            `yaml:"endpoint"`
+	Headers   map[string]string `yaml:"headers"`
+	Insecure  bool              `yaml:"insecure"`
+	Timeout   int               `yaml:"timeout"`
+	BatchSize int               `yaml:"batchSize"`
+	QueueSize int               `yaml:"queueSize"`
 }
 
 // Validate validates the configuration settings
@@ -87,6 +135,11 @@ func (s *Settings) Validate() error {
 	if s.HTTPPort < 0 || s.HTTPPort > 65535 {
 		return fmt.Errorf("httpPort must be between 0 and 65535, got %d", s.HTTPPort)
 	}
+	
+	// Validate logging configuration if present
+	if err := s.validateLoggingConfig(); err != nil {
+		return fmt.Errorf("logging configuration validation failed: %w", err)
+	}
 
 	// Validate SQLite path - if storageType is sqlite, storagePath must not be empty
 	if normalizedStorageType == "sqlite" && strings.TrimSpace(s.StoragePath) == "" {
@@ -124,6 +177,123 @@ func (s *Settings) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validateLoggingConfig validates the logging configuration
+func (s *Settings) validateLoggingConfig() error {
+	if s.Logging == nil {
+		return nil // No logging config to validate
+	}
+	
+	logging := s.Logging
+	
+	// Validate format if specified
+	if logging.Format != "" {
+		validFormats := map[string]bool{
+			"json": true,
+			"text": true,
+		}
+		if !validFormats[strings.ToLower(logging.Format)] {
+			return fmt.Errorf("logging format must be 'json' or 'text', got '%s'", logging.Format)
+		}
+	}
+	
+	// Validate output if specified
+	if logging.Output != "" {
+		validOutputs := map[string]bool{
+			"stdout": true,
+			"stderr": true,
+			"file":   true,
+		}
+		if !validOutputs[strings.ToLower(logging.Output)] {
+			return fmt.Errorf("logging output must be 'stdout', 'stderr', or 'file', got '%s'", logging.Output)
+		}
+		
+		// If output is file, filePath must be specified
+		if strings.ToLower(logging.Output) == "file" && strings.TrimSpace(logging.FilePath) == "" {
+			return fmt.Errorf("logging filePath must be specified when output is 'file'")
+		}
+	}
+	
+	// Validate buffer size
+	if logging.BufferSize < 0 {
+		return fmt.Errorf("logging bufferSize must be non-negative, got %d", logging.BufferSize)
+	}
+	
+	// Validate component levels
+	if logging.ComponentLevels != nil {
+		validLevels := map[string]bool{
+			"debug": true,
+			"info":  true,
+			"warn":  true,
+			"error": true,
+		}
+		for component, level := range logging.ComponentLevels {
+			if !validLevels[strings.ToLower(level)] {
+				return fmt.Errorf("invalid log level '%s' for component '%s', must be one of [debug, info, warn, error]", level, component)
+			}
+		}
+	}
+	
+	// Validate sampling configuration
+	if logging.Sampling != nil {
+		if logging.Sampling.Rate < 0.0 || logging.Sampling.Rate > 1.0 {
+			return fmt.Errorf("logging sampling rate must be between 0.0 and 1.0, got %f", logging.Sampling.Rate)
+		}
+		if logging.Sampling.BurstSize < 0 {
+			return fmt.Errorf("logging sampling burstSize must be non-negative, got %d", logging.Sampling.BurstSize)
+		}
+	}
+	
+	// Validate masking configuration
+	if logging.Masking != nil {
+		// Fields and patterns should be valid if specified but we won't validate regex here
+		// to avoid startup failures due to complex regex
+	}
+	
+	// Validate OTLP configuration
+	if logging.OTLP != nil {
+		if logging.OTLP.Enabled && strings.TrimSpace(logging.OTLP.Endpoint) == "" {
+			return fmt.Errorf("logging OTLP endpoint must be specified when OTLP is enabled")
+		}
+		if logging.OTLP.Timeout < 0 {
+			return fmt.Errorf("logging OTLP timeout must be non-negative, got %d", logging.OTLP.Timeout)
+		}
+		if logging.OTLP.BatchSize < 0 {
+			return fmt.Errorf("logging OTLP batchSize must be non-negative, got %d", logging.OTLP.BatchSize)
+		}
+		if logging.OTLP.QueueSize < 0 {
+			return fmt.Errorf("logging OTLP queueSize must be non-negative, got %d", logging.OTLP.QueueSize)
+		}
+	}
+	
+	// Validate audit configuration
+	if logging.EnableAudit && strings.TrimSpace(logging.AuditFilePath) == "" {
+		// Set default audit file path
+		logging.AuditFilePath = "audit.log"
+	}
+	
+	// Set reasonable defaults for missing values
+	if logging.BufferSize == 0 {
+		logging.BufferSize = 1024
+	}
+	
+	// Normalize format and output values
+	if logging.Format != "" {
+		logging.Format = strings.ToLower(logging.Format)
+	}
+	if logging.Output != "" {
+		logging.Output = strings.ToLower(logging.Output)
+	}
+	
+	// Normalize component level values
+	if logging.ComponentLevels != nil {
+		for component, level := range logging.ComponentLevels {
+			logging.ComponentLevels[component] = strings.ToLower(level)
+		}
+	}
+	
 	return nil
 }
 

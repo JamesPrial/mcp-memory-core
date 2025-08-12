@@ -13,12 +13,14 @@ import (
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"log/slog"
 )
 
 func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	ctx := context.Background()
 
 	// These should return -32600 Invalid Request (malformed)
@@ -92,7 +94,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidMethods(t *testing.T) {
 func TestServer_EdgeCases_HandleRequest_InvalidRequestStructures(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	ctx := context.Background()
 
 	t.Run("NilRequest", func(t *testing.T) {
@@ -182,7 +184,7 @@ func TestServer_EdgeCases_HandleRequest_InvalidRequestStructures(t *testing.T) {
 func TestServer_EdgeCases_HandleToolsList(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 
 	t.Run("ValidRequest", func(t *testing.T) {
 		req := &transport.JSONRPCRequest{
@@ -241,7 +243,7 @@ func TestServer_EdgeCases_HandleToolsList(t *testing.T) {
 func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	ctx := context.Background()
 
 	t.Run("MissingParams", func(t *testing.T) {
@@ -481,7 +483,7 @@ func TestServer_EdgeCases_HandleToolsCall_MalformedParams(t *testing.T) {
 func TestServer_EdgeCases_JSONSerialization(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 
 	t.Run("ResponseSerialization", func(t *testing.T) {
 		// Test that all response types can be serialized to JSON
@@ -530,7 +532,7 @@ func TestServer_EdgeCases_JSONSerialization(t *testing.T) {
 func TestServer_EdgeCases_ContextHandling(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 
 	t.Run("CancelledContext", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -581,12 +583,12 @@ func TestServer_EdgeCases_ContextHandling(t *testing.T) {
 func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	ctx := context.Background()
 
 	t.Run("ManagerError", func(t *testing.T) {
 		// Test when manager returns an error
-		mockStorage.On("SearchEntities", mock.Anything, "error_test").Return(nil, fmt.Errorf("search failed"))
+		mockStorage.On("SearchEntities", mock.Anything, "error_test").Return(nil, fmt.Errorf("Failed to search entities"))
 
 		req := &transport.JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -607,7 +609,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, -32603, resp.Error.Code)
 		assert.Contains(t, resp.Error.Message, "Internal error")
-		assert.Contains(t, resp.Error.Message, "search failed")
+		assert.Contains(t, resp.Error.Message, "Failed to search entities")
 	})
 
 	t.Run("ErrorMessageSanitization", func(t *testing.T) {
@@ -639,7 +641,7 @@ func TestServer_EdgeCases_ErrorHandling(t *testing.T) {
 func TestServer_EdgeCases_BoundaryConditions(t *testing.T) {
 	mockStorage := new(storage.MockBackend)
 	manager := knowledge.NewManager(mockStorage)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 	ctx := context.Background()
 
 	t.Run("VeryLargeRequest", func(t *testing.T) {
@@ -708,7 +710,7 @@ func TestServer_EdgeCases_BoundaryConditions(t *testing.T) {
 func TestNewServer_EdgeCases(t *testing.T) {
 	t.Run("NilManager", func(t *testing.T) {
 		// NewServer should accept nil manager but handle it gracefully
-		server := NewServer(nil)
+		server := NewServer(nil, slog.Default())
 		assert.NotNil(t, server)
 		assert.Nil(t, server.manager)
 		

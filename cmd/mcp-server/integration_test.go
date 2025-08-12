@@ -12,6 +12,8 @@ import (
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"log/slog"
 )
 
 func TestServerWithSQLiteBackend(t *testing.T) {
@@ -53,7 +55,7 @@ sqlite:
 
 	// Create knowledge manager and server
 	manager := knowledge.NewManager(backend)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 
 	// Test tools/list
 	ctx := context.Background()
@@ -137,7 +139,7 @@ logLevel: "info"`
 
 	// Create knowledge manager and server
 	manager := knowledge.NewManager(backend)
-	server := NewServer(manager)
+	server := NewServer(manager, slog.Default())
 
 	// Test basic operations
 	ctx := context.Background()

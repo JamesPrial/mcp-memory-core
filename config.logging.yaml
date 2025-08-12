@@ -1,0 +1,96 @@
+# Example configuration showcasing the new unified logging system
+# Phase 6: Server Integration and Configuration Complete
+
+storageType: memory
+transportType: http
+logLevel: info  # Legacy field - will be converted to new logging format
+
+transport:
+  host: localhost
+  port: 8080
+  readTimeout: 30
+  writeTimeout: 30
+  maxConnections: 100
+  enableCors: true
+
+# New unified logging configuration
+logging:
+  # Basic settings
+  format: json          # json or text
+  output: stdout        # stdout, stderr, or file
+  filePath: ./server.log  # Required if output is 'file'
+  
+  # Performance settings
+  bufferSize: 4096      # Buffer size for async logging
+  asyncLogging: true    # Enable asynchronous logging
+  
+  # Feature flags
+  enableRequestId: true    # Add request IDs to logs
+  enableTracing: false     # Enable OpenTelemetry tracing (placeholder)
+  enableAudit: true        # Enable audit logging
+  auditFilePath: ./audit.log
+  enableStackTrace: false  # Include stack traces in error logs
+  enableCaller: true       # Include caller info in logs
+  prettyPrint: false       # Pretty print JSON (dev mode)
+  
+  # Component-specific log levels
+  componentLevels:
+    main: info
+    server: debug
+    admin: debug
+    storage: info
+    transport: info
+    knowledge: debug
+    
+  # Log sampling (for high-volume production)
+  sampling:
+    enabled: false        # Enable log sampling
+    rate: 0.1             # Sample 10% of logs
+    burstSize: 100        # Allow bursts before sampling
+    alwaysErrors: true    # Always log errors regardless of sampling
+    
+  # Sensitive data masking
+  masking:
+    enabled: true
+    maskEmails: true
+    maskPhoneNumbers: true
+    maskCreditCards: true
+    maskSsn: true
+    maskApiKeys: true
+    fields:               # Field names to mask
+      - password
+      - secret
+      - token
+      - apiKey
+    patterns:             # Regex patterns for masking
+      - "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+      
+  # OpenTelemetry Log Export (placeholder for future implementation)
+  otlp:
+    enabled: false
+    endpoint: "http://localhost:4318/v1/logs"
+    headers:
+      Authorization: "Bearer your-token"
+    insecure: true
+    timeout: 30           # seconds
+    batchSize: 100
+    queueSize: 1000
+
+# Environment Variable Overrides:
+# MCP_LOG_LEVEL=debug
+# MCP_LOG_FORMAT=json
+# MCP_LOG_OUTPUT=stdout
+# MCP_LOG_FILE_PATH=/path/to/log
+# MCP_LOG_ASYNC=true
+# MCP_LOG_AUDIT=true
+
+# Admin Server Features (when HTTP transport is used):
+# - Health checks: GET http://localhost:9080/health
+# - Dynamic log levels: GET/POST http://localhost:9080/log-level
+# - All component levels: GET http://localhost:9080/log-levels
+# - Metrics endpoint: GET http://localhost:9080/metrics
+
+# Signal Handling:
+# - SIGUSR1: Toggle debug logging for all components
+# - SIGUSR2: Rotate logs (placeholder)
+# - SIGTERM/SIGINT: Graceful shutdown

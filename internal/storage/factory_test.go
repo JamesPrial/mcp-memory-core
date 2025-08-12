@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,7 +48,7 @@ func TestNewBackend_SQLite_NoPath(t *testing.T) {
 	backend, err := NewBackend(cfg)
 	assert.Error(t, err)
 	assert.Nil(t, backend)
-	assert.Contains(t, err.Error(), "storage path is required")
+	assert.True(t, errors.Is(err, errors.ErrCodeConfiguration), "Expected configuration error")
 }
 
 func TestNewBackend_Memory(t *testing.T) {
@@ -85,7 +86,7 @@ func TestNewBackend_UnsupportedType(t *testing.T) {
 	backend, err := NewBackend(cfg)
 	assert.Error(t, err)
 	assert.Nil(t, backend)
-	assert.Contains(t, err.Error(), "unsupported storage type: postgresql")
+	assert.True(t, errors.Is(err, errors.ErrCodeConfiguration), "Expected configuration error")
 }
 
 func TestNewBackend_IntegrationWithOperations(t *testing.T) {

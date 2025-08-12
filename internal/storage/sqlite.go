@@ -5,18 +5,30 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
+	"github.com/JamesPrial/mcp-memory-core/pkg/logging"
 	"github.com/JamesPrial/mcp-memory-core/pkg/mcp"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type SqliteBackend struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewSqliteBackend creates a new SQLite backend with the specified database path and WAL mode setting
 func NewSqliteBackend(dbPath string, walMode bool) (Backend, error) {
+	logger := logging.GetGlobalLogger("storage.sqlite")
+	
+	logger.Info("Creating SQLite backend",
+		slog.String("db_path", dbPath),
+		slog.Bool("wal_mode", walMode),
+	)
+	
 	// Configure connection string with appropriate settings
 	connStr := dbPath
 	if walMode {
@@ -27,28 +39,41 @@ func NewSqliteBackend(dbPath string, walMode bool) (Backend, error) {
 
 	db, err := sql.Open("sqlite3", connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		logger.Error("Failed to open database connection",
+			slog.String("connection_string", connStr),
+			slog.String("error", err.Error()),
+		)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to open database connection")
 	}
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
+		logger.Error("Database connection test failed",
+			slog.String("error", err.Error()),
+		)
 		db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Database connection test failed")
 	}
 
-	backend := &SqliteBackend{db: db}
+	backend := &SqliteBackend{
+		db:     db,
+		logger: logger,
+	}
 
 	// Initialize the database schema
 	if err := backend.initSchema(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageInitialization, "Failed to initialize database schema")
 	}
 
+	logger.Info("SQLite backend initialized successfully")
 	return backend, nil
 }
 
 // initSchema creates the necessary tables for the database
 func (s *SqliteBackend) initSchema() error {
+	s.logger.Debug("Initializing database schema")
+	
 	createEntitiesTable := `
 	CREATE TABLE IF NOT EXISTS entities (
 		id TEXT PRIMARY KEY,
@@ -65,10 +90,21 @@ func (s *SqliteBackend) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_entities_updated_at ON entities(updated_at);
 	`
 
+	startTime := time.Now()
 	_, err := s.db.Exec(createEntitiesTable)
+	duration := time.Since(startTime)
+	
 	if err != nil {
-		return err
+		s.logger.Error("Failed to create entities table",
+			slog.Duration("duration", duration),
+			slog.String("error", err.Error()),
+		)
+		return errors.Wrap(err, errors.ErrCodeStorageInitialization, "Failed to create entities table")
 	}
+	
+	s.logger.Debug("Entities table created/verified",
+		slog.Duration("duration", duration),
+	)
 
 	// Migration: Add updated_at column if it doesn't exist (for existing databases)
 	_, err = s.db.Exec(`
@@ -76,7 +112,7 @@ func (s *SqliteBackend) initSchema() error {
 	`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		// Only return error if it's not a "column already exists" error
-		return fmt.Errorf("failed to add updated_at column: %w", err)
+		return errors.Wrap(err, errors.ErrCodeStorageInitialization, "Failed to add updated_at column")
 	}
 
 	// Update any existing records that don't have updated_at
@@ -84,7 +120,7 @@ func (s *SqliteBackend) initSchema() error {
 		UPDATE entities SET updated_at = created_at WHERE updated_at IS NULL;
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to initialize updated_at values: %w", err)
+		return errors.Wrap(err, errors.ErrCodeStorageInitialization, "Failed to initialize updated_at values")
 	}
 
 	return nil
@@ -93,15 +129,32 @@ func (s *SqliteBackend) initSchema() error {
 // CreateEntities inserts multiple entities into the database
 func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entity) error {
 	if len(entities) == 0 {
+		s.logger.DebugContext(ctx, "No entities to create")
 		return nil
 	}
 
+	timer := logging.StartTimer(ctx, s.logger, "createEntities")
+	defer timer.End()
+	
+	s.logger.InfoContext(ctx, "Creating entities in database",
+		slog.Int("count", len(entities)),
+	)
+
+	startTime := time.Now()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		s.logger.ErrorContext(ctx, "Failed to begin transaction",
+			slog.String("error", err.Error()),
+		)
+		return errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to begin transaction")
 	}
+	
+	s.logger.DebugContext(ctx, "Database transaction started",
+		slog.Duration("tx_start_duration", time.Since(startTime)),
+	)
 	defer tx.Rollback()
 
+	prepareTime := time.Now()
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO entities (id, name, entity_type, observations, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -113,22 +166,30 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 			-- created_at is NOT updated, preserving original creation time
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
+		s.logger.ErrorContext(ctx, "Failed to prepare insert statement",
+			slog.String("error", err.Error()),
+		)
+		return errors.Wrap(err, errors.ErrCodeStorageInvalidQuery, "Failed to prepare insert statement")
 	}
 	defer stmt.Close()
+	
+	s.logger.DebugContext(ctx, "Statement prepared",
+		slog.Duration("prepare_duration", time.Since(prepareTime)),
+	)
 
 	for _, entity := range entities {
 		// Check for empty string IDs
 		if strings.TrimSpace(entity.ID) == "" {
-			return fmt.Errorf("entity ID cannot be empty or whitespace-only")
+			return errors.New(errors.ErrCodeValidationRequired, "Entity ID cannot be empty or whitespace-only")
 		}
 		
 		// Serialize observations to JSON
 		observationsJSON, err := json.Marshal(entity.Observations)
 		if err != nil {
-			return fmt.Errorf("failed to marshal observations for entity %s: %w", entity.ID, err)
+			return errors.Wrapf(err, errors.ErrCodeStorageInvalidQuery, "Failed to marshal observations for entity %s", entity.ID)
 		}
 
+		insertTime := time.Now()
 		_, err = stmt.ExecContext(ctx, 
 			entity.ID, 
 			entity.Name, 
@@ -137,16 +198,59 @@ func (s *SqliteBackend) CreateEntities(ctx context.Context, entities []mcp.Entit
 			entity.CreatedAt,
 			entity.UpdatedAt,
 		)
+		insertDuration := time.Since(insertTime)
+		
 		if err != nil {
-			return fmt.Errorf("failed to insert entity %s: %w", entity.ID, err)
+			s.logger.ErrorContext(ctx, "Failed to insert entity",
+				slog.String("entity_id", entity.ID),
+				slog.String("entity_name", entity.Name),
+				slog.Duration("insert_duration", insertDuration),
+				slog.String("error", err.Error()),
+			)
+			
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				return errors.Wrapf(err, errors.ErrCodeStorageConflict, "Entity with ID %s already exists", entity.ID)
+			}
+			return errors.Wrapf(err, errors.ErrCodeStorageInvalidQuery, "Failed to insert entity %s", entity.ID)
 		}
+		
+		s.logger.DebugContext(ctx, "Entity inserted",
+			slog.String("entity_id", entity.ID),
+			slog.String("entity_name", entity.Name),
+			slog.Duration("insert_duration", insertDuration),
+		)
 	}
 
-	return tx.Commit()
+	// Commit transaction
+	commitTime := time.Now()
+	if err := tx.Commit(); err != nil {
+		s.logger.ErrorContext(ctx, "Failed to commit transaction",
+			slog.Duration("commit_duration", time.Since(commitTime)),
+			slog.String("error", err.Error()),
+		)
+		return errors.Wrap(err, errors.ErrCodeStorageTransaction, "Failed to commit database transaction")
+	}
+
+	totalDuration := time.Since(startTime)
+	s.logger.InfoContext(ctx, "Successfully created entities",
+		slog.Int("count", len(entities)),
+		slog.Duration("total_duration", totalDuration),
+		slog.Duration("commit_duration", time.Since(commitTime)),
+	)
+
+	return nil
 }
 
 // GetEntity retrieves a single entity by ID
 func (s *SqliteBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, error) {
+	timer := logging.StartTimer(ctx, s.logger, "getEntity")
+	defer timer.End()
+	
+	s.logger.DebugContext(ctx, "Getting entity by ID",
+		slog.String("entity_id", id),
+	)
+	
+	queryTime := time.Now()
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, entity_type, observations, created_at, updated_at
 		FROM entities
@@ -164,19 +268,42 @@ func (s *SqliteBackend) GetEntity(ctx context.Context, id string) (*mcp.Entity, 
 		&entity.CreatedAt,
 		&entity.UpdatedAt,
 	)
+	scanDuration := time.Since(queryTime)
+	
 	if err != nil {
 		if err == sql.ErrNoRows {
+			s.logger.DebugContext(ctx, "Entity not found",
+				slog.String("entity_id", id),
+				slog.Duration("query_duration", scanDuration),
+			)
 			return nil, nil // Entity not found
 		}
-		return nil, fmt.Errorf("failed to scan entity: %w", err)
+		s.logger.ErrorContext(ctx, "Failed to scan entity from database",
+			slog.String("entity_id", id),
+			slog.Duration("query_duration", scanDuration),
+			slog.String("error", err.Error()),
+		)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to scan entity from database")
 	}
 
 	// Deserialize observations from JSON
 	if observationsJSON != "" {
 		if err := json.Unmarshal([]byte(observationsJSON), &entity.Observations); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal observations: %w", err)
+			s.logger.ErrorContext(ctx, "Failed to unmarshal observations",
+				slog.String("entity_id", id),
+				slog.String("observations_json", observationsJSON),
+				slog.String("error", err.Error()),
+			)
+			return nil, errors.Wrap(err, errors.ErrCodeStorageInvalidQuery, "Failed to unmarshal observations")
 		}
 	}
+
+	s.logger.DebugContext(ctx, "Entity retrieved successfully",
+		slog.String("entity_id", id),
+		slog.String("entity_name", entity.Name),
+		slog.Duration("query_duration", scanDuration),
+		slog.Int("observations_count", len(entity.Observations)),
+	)
 
 	return &entity, nil
 }
@@ -210,7 +337,7 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 	}
 	
 	if err != nil {
-		return nil, fmt.Errorf("failed to query entities: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to query entities")
 	}
 	defer rows.Close()
 
@@ -228,13 +355,13 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 			&entity.UpdatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan entity: %w", err)
+			return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to scan entity from search results")
 		}
 
 		// Deserialize observations from JSON
 		if observationsJSON != "" {
 			if err := json.Unmarshal([]byte(observationsJSON), &entity.Observations); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal observations: %w", err)
+				return nil, errors.Wrap(err, errors.ErrCodeStorageInvalidQuery, "Failed to unmarshal observations from search results")
 			}
 		}
 
@@ -242,7 +369,7 @@ func (s *SqliteBackend) SearchEntities(ctx context.Context, query string) ([]mcp
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over rows: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Error iterating over search results")
 	}
 
 	return entities, nil
@@ -256,7 +383,7 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 	var totalCount int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM entities").Scan(&totalCount)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get total entity count: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to get total entity count")
 	}
 	stats["entities"] = totalCount
 
@@ -267,7 +394,7 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 		GROUP BY entity_type
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query entity counts by type: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to query entity counts by type")
 	}
 	defer rows.Close()
 
@@ -275,7 +402,7 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 		var entityType string
 		var count int
 		if err := rows.Scan(&entityType, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan entity type count: %w", err)
+			return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Failed to scan entity type count")
 		}
 		// Use "type_" prefix to match memory backend convention
 		if entityType != "" {
@@ -284,7 +411,7 @@ func (s *SqliteBackend) GetStatistics(ctx context.Context) (map[string]int, erro
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over entity type rows: %w", err)
+		return nil, errors.Wrap(err, errors.ErrCodeStorageConnection, "Error iterating over entity type statistics")
 	}
 
 	return stats, nil

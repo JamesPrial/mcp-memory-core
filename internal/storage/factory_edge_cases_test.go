@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/JamesPrial/mcp-memory-core/pkg/config"
+	"github.com/JamesPrial/mcp-memory-core/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ func TestNewBackend_EdgeCases_InvalidConfigs(t *testing.T) {
 		backend, err := NewBackend(nil)
 		assert.Nil(t, backend)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "configuration cannot be nil")
+		assert.True(t, errors.Is(err, errors.ErrCodeConfiguration), "Expected configuration error")
 	})
 
 	t.Run("EmptyConfig", func(t *testing.T) {
@@ -71,7 +72,7 @@ func TestNewBackend_EdgeCases_InvalidConfigs(t *testing.T) {
 					// All other invalid types should error
 					assert.Error(t, err)
 					assert.Nil(t, backend)
-					assert.Contains(t, err.Error(), "unsupported storage type")
+					assert.True(t, errors.Is(err, errors.ErrCodeConfiguration), "Expected configuration error")
 				}
 			})
 		}
@@ -88,7 +89,7 @@ func TestNewBackend_EdgeCases_SQLiteConfig(t *testing.T) {
 		backend, err := NewBackend(cfg)
 		assert.Error(t, err)
 		assert.Nil(t, backend)
-		assert.Contains(t, err.Error(), "storage path is required for SQLite backend")
+		assert.True(t, errors.Is(err, errors.ErrCodeConfiguration), "Expected configuration error")
 	})
 
 	t.Run("OnlyWhitespaceStoragePath", func(t *testing.T) {
@@ -442,16 +443,16 @@ func TestNewBackend_EdgeCases_ErrorRecovery(t *testing.T) {
 	t.Run("ErrorMessageContent", func(t *testing.T) {
 		// Test that error messages contain useful information
 		testCases := []struct {
-			name        string
-			cfg         *config.Settings
-			expectedErr string
+			name         string
+			cfg          *config.Settings
+			expectedCode errors.ErrorCode
 		}{
 			{
 				name: "UnsupportedType",
 				cfg: &config.Settings{
 					StorageType: "unsupported_type",
 				},
-				expectedErr: "unsupported storage type: unsupported_type",
+				expectedCode: errors.ErrCodeConfiguration,
 			},
 			{
 				name: "EmptyPathForSQLite",
@@ -459,7 +460,7 @@ func TestNewBackend_EdgeCases_ErrorRecovery(t *testing.T) {
 					StorageType: "sqlite",
 					StoragePath: "",
 				},
-				expectedErr: "storage path is required for SQLite backend",
+				expectedCode: errors.ErrCodeConfiguration,
 			},
 		}
 
@@ -468,7 +469,7 @@ func TestNewBackend_EdgeCases_ErrorRecovery(t *testing.T) {
 				backend, err := NewBackend(tc.cfg)
 				assert.Error(t, err)
 				assert.Nil(t, backend)
-				assert.Equal(t, tc.expectedErr, err.Error())
+				assert.True(t, errors.Is(err, tc.expectedCode), "Expected error code %s", tc.expectedCode)
 			})
 		}
 	})
